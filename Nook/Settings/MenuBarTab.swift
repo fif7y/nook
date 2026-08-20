@@ -318,12 +318,12 @@ private struct NookItemsStrip: View {
             VStack(alignment: .leading, spacing: 6) {
                 NookItemRow(
                     symbol: "playpause.fill", title: "Media controls",
-                    caption: "Click plays/pauses, right-click for tracks — works with every player",
+                    caption: "Shows while audio plays (lingers a few minutes after) — click plays/pauses, right-click for tracks",
                     isOn: hasKind(.mediaControls)
                 ) { toggleKind(.mediaControls, on: $0) }
                 NookItemRow(
                     symbol: "video.fill", title: "Camera & mic indicator",
-                    caption: "Appears whenever any camera or mic is live — even from Hidden",
+                    caption: "Exists only while a camera or mic is live — its section just decides where it appears",
                     isOn: hasKind(.cameraMicIndicator)
                 ) { toggleKind(.cameraMicIndicator, on: $0) }
                 NookItemRow(

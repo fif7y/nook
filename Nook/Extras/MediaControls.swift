@@ -78,7 +78,9 @@ final class ExtrasManager {
                 title: spec.itemTitle, symbol: Self.symbol(for: spec)
             )
         }
-        let needsCameraMonitor = newSpecs.contains { $0.kind == .cameraMicIndicator }
+        let needsCameraMonitor = newSpecs.contains {
+            $0.kind == .cameraMicIndicator || $0.kind == .mediaControls
+        }
         if needsCameraMonitor, cameraMicMonitor == nil {
             cameraMicMonitor = CameraMicMonitor { [weak self] in
                 self?.applyCurrent()
@@ -105,17 +107,20 @@ final class ExtrasManager {
             guard let spec = specs[id] else { continue }
             let section = model.section(of: Self.itemID(for: spec))
             var visible = section == .visible || revealed.contains(section)
-            if spec.kind == .cameraMicIndicator {
-                // macOS force-shows its own camera pill through the assertion
-                // when the camera is live (privacy override). Nook's indicator
-                // fills the gap, never duplicates: it self-asserts only while
-                // hardware is active AND the system pill isn't on screen.
+            switch spec.kind {
+            case .cameraMicIndicator:
+                // Pure indicator, like Apple's: exists ONLY while hardware is
+                // live (section decides where it appears, not whether). Defers
+                // to the system pill when that one is on screen.
                 let active = cameraMicMonitor?.isActive ?? false
-                visible = visible || (active && !systemCameraPillVisible)
-                if systemCameraPillVisible, section != .visible, !revealed.contains(section) {
-                    visible = false
-                }
+                visible = active && !systemCameraPillVisible
                 updateCameraSymbol(item, monitor: cameraMicMonitor)
+            case .mediaControls:
+                // Section-governed AND media-relevant: playing, or within the
+                // post-playback linger so pause doesn't swallow resume.
+                visible = visible && (cameraMicMonitor?.mediaRelevant ?? true)
+            case .airdrop, .shortcut:
+                break
             }
             setVisible(visible, for: id, item: item)
         }
@@ -354,10 +359,20 @@ final class ExtrasManager {
 final class CameraMicMonitor {
     private(set) var cameraActive = false
     private(set) var micActive = false
+    /// Any audio OUTPUT device running — the "something is playing" signal.
+    private(set) var audioOutputActive = false
+    private(set) var lastAudioActiveAt: Date = .distantPast
     private var timer: Timer?
     private let onChange: () -> Void
 
     var isActive: Bool { cameraActive || micActive }
+
+    /// Playing now, or within the linger window — so pausing music doesn't
+    /// swallow the resume button. (Apple keeps Now Playing for the paused
+    /// session via private API; the linger is the honest approximation.)
+    var mediaRelevant: Bool {
+        audioOutputActive || Date().timeIntervalSince(lastAudioActiveAt) < 300
+    }
 
     init(onChange: @escaping () -> Void) {
         self.onChange = onChange
@@ -377,11 +392,58 @@ final class CameraMicMonitor {
     private func poll() {
         let camera = Self.anyCameraRunning()
         let mic = Self.anyMicRunning()
-        if camera != cameraActive || mic != micActive {
+        let audio = Self.anyOutputRunning()
+        if audio { lastAudioActiveAt = Date() }
+        let relevantNow = mediaRelevant
+        if camera != cameraActive || mic != micActive || audio != audioOutputActive
+            || relevantNow != lastMediaRelevant {
             cameraActive = camera
             micActive = mic
+            audioOutputActive = audio
+            lastMediaRelevant = relevantNow
             onChange()
         }
+    }
+
+    private var lastMediaRelevant = true
+
+    private static func anyOutputRunning() -> Bool {
+        var propertyAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject), &propertyAddress, 0, nil, &dataSize
+        ) == noErr else { return false }
+        let count = Int(dataSize) / MemoryLayout<AudioObjectID>.size
+        var deviceIDs = [AudioObjectID](repeating: 0, count: count)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &propertyAddress, 0, nil, &dataSize, &deviceIDs
+        ) == noErr else { return false }
+        for deviceID in deviceIDs {
+            var streamsAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyStreams,
+                mScope: kAudioDevicePropertyScopeOutput,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var streamsSize: UInt32 = 0
+            guard AudioObjectGetPropertyDataSize(deviceID, &streamsAddress, 0, nil, &streamsSize) == noErr,
+                  streamsSize > 0 else { continue }
+            var runningAddress = AudioObjectPropertyAddress(
+                mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+                mScope: kAudioObjectPropertyScopeGlobal,
+                mElement: kAudioObjectPropertyElementMain
+            )
+            var running: UInt32 = 0
+            var size = UInt32(MemoryLayout<UInt32>.size)
+            if AudioObjectGetPropertyData(deviceID, &runningAddress, 0, nil, &size, &running) == noErr,
+               running != 0 {
+                return true
+            }
+        }
+        return false
     }
 
     private static func anyCameraRunning() -> Bool {
