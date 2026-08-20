@@ -173,6 +173,8 @@ final class MenuBarBandMonitor {
         return false
     }
 
+    private var pendingSingleClick: DispatchWorkItem?
+
     private func clicked(_ event: NSEvent) {
         guard let appState else { return }
         let location = NSEvent.mouseLocation
@@ -180,10 +182,31 @@ final class MenuBarBandMonitor {
         let inBand = screen.map { isInMenuBarBand(location, of: $0) } ?? false
 
         if inBand {
+            guard isEmptyMenuBarArea(location, on: screen) else { return }
+            if event.type == .rightMouseDown {
+                // Right-click on empty bar: always-available settings entry.
+                let menu = NookStatusItem.contextMenu(appState: appState)
+                menu.popUp(positioning: nil, at: location, in: nil)
+                return
+            }
             guard appState.settings.revealTriggers.clickEnabled else { return }
-            guard isEmptyMenuBarArea(location) else { return }
-            if event.clickCount >= 2, appState.settings.revealTriggers.doubleClickForAlwaysHidden {
-                appState.reveal([.hidden, .alwaysHidden], reason: .doubleClick)
+            NookLog.log("band: empty-area click count=\(event.clickCount)")
+            if event.clickCount >= 2 {
+                // Second click of a double: cancel the deferred single action.
+                pendingSingleClick?.cancel()
+                pendingSingleClick = nil
+                if appState.settings.revealTriggers.doubleClickForAlwaysHidden {
+                    appState.reveal([.hidden, .alwaysHidden], reason: .doubleClick)
+                }
+            } else if appState.settings.revealTriggers.doubleClickForAlwaysHidden {
+                // Defer the single-click toggle long enough for a potential
+                // second click — otherwise double-click can never fire.
+                pendingSingleClick?.cancel()
+                let work = DispatchWorkItem { [weak appState] in
+                    appState?.toggle(reason: .click)
+                }
+                pendingSingleClick = work
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
             } else {
                 appState.toggle(reason: .click)
             }
@@ -211,20 +234,39 @@ final class MenuBarBandMonitor {
         return NSMouseInRect(point, band, false)
     }
 
-    /// Empty = not over any status item (from the engine snapshot) and right
-    /// of the frontmost app's menus (approximated by the leftmost known item).
-    private func isEmptyMenuBarArea(_ point: NSPoint) -> Bool {
-        guard let snapshot = appState?.snapshot else { return false }
-        let itemFrames = snapshot.items.compactMap(\.frame)
-        guard let leftmost = itemFrames.map(\.minX).min() else { return false }
-        // AX frames are top-left origin; NSEvent.mouseLocation is bottom-left.
-        // In the band we only need X to decide emptiness.
-        let x = point.x
-        for frame in itemFrames where x >= frame.minX && x <= frame.maxX {
-            return false
+    /// Empty = the AX element under the pointer belongs to the menubar host
+    /// but is not an item/menu. A systemwide hit-test works on every display
+    /// (the snapshot's frames are main-display-only, which silently broke
+    /// empty-click detection on external screens).
+    private func isEmptyMenuBarArea(_ point: NSPoint, on screen: NSScreen?) -> Bool {
+        guard let primary = NSScreen.screens.first else { return false }
+        // Convert bottom-left mouse coords → top-left AX coords.
+        let axPoint = CGPoint(x: point.x, y: primary.frame.maxY - point.y)
+        let systemWide = AXUIElementCreateSystemWide()
+        var element: AXUIElement?
+        guard AXUIElementCopyElementAtPosition(systemWide, Float(axPoint.x), Float(axPoint.y), &element) == .success,
+              let element else {
+            // Nothing under the pointer at all — treat as empty bar.
+            return true
         }
-        // Left of every status item = app-menu territory; not "empty".
-        return x < leftmost ? false : true
+        var roleValue: CFTypeRef?
+        AXUIElementCopyAttributeValue(element, kAXRoleAttribute as CFString, &roleValue)
+        let role = roleValue as? String ?? ""
+        var pid: pid_t = 0
+        AXUIElementGetPid(element, &pid)
+        let owner = NSRunningApplication(processIdentifier: pid)?.bundleIdentifier ?? "?"
+        // Items, buttons, and app menus are NOT empty; the agent's bare
+        // window/group backdrop is.
+        let itemRoles: Set<String> = ["AXMenuBarItem", "AXButton", "AXMenuButton", "AXImage"]
+        // The frontmost app's bare AXMenuBar element is the backdrop that
+        // spans the whole bar — hitting it (not an AXMenuBarItem title) means
+        // empty space. The agent's own window/group backdrop counts too.
+        let empty = !itemRoles.contains(role)
+            && (role == "AXMenuBar"
+                || owner == ItemEnumeratorBundle.agent
+                || role == "AXWindow" || role == "AXGroup")
+        NookLog.log("band: hit-test role=\(role) owner=\(owner) → empty=\(empty)")
+        return empty
     }
 
     private func displayUUIDString(_ screen: NSScreen) -> String? {

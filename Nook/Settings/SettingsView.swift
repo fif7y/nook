@@ -37,7 +37,16 @@ struct GeneralSettingsTab: View {
                         ? SMAppService.mainApp.register()
                         : SMAppService.mainApp.unregister()
                 })
-                Toggle("Show Nook icon in the menu bar", isOn: binding(\.showStatusItem))
+                Toggle(isOn: binding(\.showStatusItem, onSet: { enabled in
+                    if !enabled { Self.showIconlessHint() }
+                })) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Show Nook icon in the menu bar")
+                        Text("Without it: reopen Nook from Spotlight, right-click a separator, or right-click an empty spot in the menu bar.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
             }
 
             Section("Reveal") {
@@ -46,8 +55,9 @@ struct GeneralSettingsTab: View {
                     LabeledSlider(
                         title: "Hover delay",
                         value: binding(\.revealTriggers.hoverDelay),
-                        range: 0...1,
-                        format: "%.1fs"
+                        range: 0...0.5,
+                        format: "%.1fs",
+                        zeroLabel: "Instant"
                     )
                 }
                 Toggle("Reveal on click in empty menu bar area", isOn: binding(\.revealTriggers.clickEnabled))
@@ -60,8 +70,8 @@ struct GeneralSettingsTab: View {
                     LabeledSlider(
                         title: "After",
                         value: binding(\.rehideDelay),
-                        range: 1...30,
-                        format: "%.0fs"
+                        range: 0.25...10,
+                        format: "%.2gs"
                     )
                 }
                 Toggle("Rehide when clicking elsewhere", isOn: binding(\.rehideOnClickElsewhere))
@@ -102,6 +112,15 @@ struct GeneralSettingsTab: View {
             }
         )
     }
+
+    /// One-time orientation when the user goes iconless.
+    static func showIconlessHint() {
+        let alert = NSAlert()
+        alert.messageText = "Nook stays a click away"
+        alert.informativeText = "You can always open Nook Settings by:\n\n•  Opening Nook again from Spotlight or Finder\n•  Right-clicking any Nook separator in the menu bar\n•  Right-clicking an empty spot in the menu bar"
+        alert.alertStyle = .informational
+        alert.runModal()
+    }
 }
 
 struct LabeledSlider: View {
@@ -109,15 +128,16 @@ struct LabeledSlider: View {
     @Binding var value: TimeInterval
     let range: ClosedRange<Double>
     let format: String
+    var zeroLabel: String? = nil
 
     var body: some View {
         HStack {
             Text(title)
             Slider(value: $value, in: range)
-            Text(String(format: format, value))
+            Text(value == 0 ? (zeroLabel ?? String(format: format, value)) : String(format: format, value))
                 .monospacedDigit()
                 .foregroundStyle(.secondary)
-                .frame(width: 40, alignment: .trailing)
+                .frame(width: 52, alignment: .trailing)
         }
     }
 }
