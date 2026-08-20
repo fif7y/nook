@@ -72,6 +72,8 @@ private struct EditorSectionView: View {
         appState.editorItems(in: section)
     }
 
+    @State private var rowTargeted = false
+
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 6) {
@@ -90,7 +92,12 @@ private struct EditorSectionView: View {
                 ForEach(items, id: \.id.rawValue) { item in
                     ItemTile(item: item, section: section)
                 }
-                if items.isEmpty {
+                // Trailing landing slot: appears while a chip hovers the row
+                // itself (append position).
+                if rowTargeted {
+                    LandingSlot()
+                }
+                if items.isEmpty, !rowTargeted {
                     Text("Drop icons here")
                         .font(.callout)
                         .foregroundStyle(.tertiary)
@@ -102,14 +109,31 @@ private struct EditorSectionView: View {
             .frame(maxWidth: .infinity, minHeight: 48, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: 12)
-                    .fill(.quaternary.opacity(section == .visible ? 0.35 : 0.55))
+                    .fill(.quaternary.opacity(rowTargeted ? 0.8 : (section == .visible ? 0.35 : 0.55)))
             )
+            .animation(.spring(duration: 0.25), value: rowTargeted)
             .dropDestination(for: String.self) { dropped, _ in
                 guard let raw = dropped.first else { return false }
                 appState.moveItem(ItemID(rawValue: raw), to: section, before: nil)
                 return true
+            } isTargeted: { targeting in
+                rowTargeted = targeting
             }
         }
+    }
+}
+
+/// Animated placeholder showing where a dragged chip will land.
+private struct LandingSlot: View {
+    var body: some View {
+        RoundedRectangle(cornerRadius: 9)
+            .fill(.tint.opacity(0.18))
+            .overlay(
+                RoundedRectangle(cornerRadius: 9)
+                    .strokeBorder(.tint.opacity(0.7), style: StrokeStyle(lineWidth: 1.5, dash: [4, 3]))
+            )
+            .frame(width: 34, height: 34)
+            .transition(.scale(scale: 0.6).combined(with: .opacity))
     }
 }
 
@@ -120,6 +144,7 @@ private struct ItemTile: View {
     let item: ObservedItem
     let section: NookCore.Section
     @State private var hovered = false
+    @State private var targeted = false
 
     private var displayName: String {
         item.appName ?? item.id.bundleID?.components(separatedBy: ".").last ?? "?"
@@ -171,11 +196,26 @@ private struct ItemTile: View {
                 .frame(maxWidth: 52)
         }
         .onHover { hovered = $0 }
+        // Insertion gap: the tile slides right and an accent bar marks where
+        // the dragged chip will land (before this tile).
+        .padding(.leading, targeted ? 16 : 0)
+        .overlay(alignment: .leading) {
+            if targeted {
+                Capsule()
+                    .fill(.tint)
+                    .frame(width: 3, height: 34)
+                    .offset(x: 5, y: -7)
+                    .transition(.scale(scale: 0.5).combined(with: .opacity))
+            }
+        }
+        .animation(.spring(duration: 0.22), value: targeted)
         .draggable(item.id.rawValue)
         .dropDestination(for: String.self) { dropped, _ in
             guard let raw = dropped.first, raw != item.id.rawValue else { return false }
             appState.moveItem(ItemID(rawValue: raw), to: section, before: item.id)
             return true
+        } isTargeted: { targeting in
+            targeted = targeting
         }
     }
 }

@@ -196,10 +196,13 @@ final class AppState {
         }
     }
 
-    /// Target zones are computed from live AX frames: always-hidden lands left
-    /// of every managed item, hidden lands just left of the chevron, visible
-    /// just right of it.
+    /// Places the icon at its exact slot: between its new neighbors in the
+    /// section's order (midpoint of their real frames), falling back to the
+    /// section zone edge when it has no neighbors. Waits for the bar to settle
+    /// first — measuring mid-reflow grabs stale coordinates, and a synthetic
+    /// ⌘-drag released in the wrong place can fire system gestures.
     private func physicallyPlace(_ id: ItemID, in section: NookCore.Section) async {
+        try? await Task.sleep(for: .milliseconds(450))
         let snap = await engine.snapshot()
         snapshot = snap
         let nookBundle = Bundle.main.bundleIdentifier ?? "app.fif7y.Nook"
@@ -209,37 +212,60 @@ final class AppState {
             let chevron = snap.items.first(where: {
                 $0.id.bundleID == nookBundle && !$0.id.rawValue.contains("Separator")
             }),
-            let chevronFrame = chevron.frame
+            let chevronFrame = chevron.frame,
+            let screen = NSScreen.screens.first
         else {
             NookLog.log("place: no frame for \(id.rawValue) — skipping physical move (concealed?)")
             return
         }
+
+        // Neighbors in the DESIRED order that have live frames.
+        let ordered = editorItems(in: section)
+        let index = ordered.firstIndex(where: { $0.id == id }) ?? ordered.count
+        let leftNeighbor = ordered[..<index].reversed().compactMap(\.frame).first
+        let rightNeighbor = ordered[(min(index + 1, ordered.count))...].compactMap(\.frame).first
+
         let managedMinX = snap.items
             .filter { $0.id.bundleID?.hasPrefix("com.apple.") != true && !$0.id.isSystemModule }
             .compactMap(\.frame?.minX)
             .min() ?? chevronFrame.minX
-        let targetX: CGFloat
-        switch section {
-        case .alwaysHidden: targetX = managedMinX - 20
-        case .hidden: targetX = chevronFrame.minX - 15
-        case .visible: targetX = chevronFrame.maxX + 25
+
+        var targetX: CGFloat
+        switch (leftNeighbor, rightNeighbor) {
+        case (let left?, let right?) where left.maxX < right.minX:
+            targetX = (left.maxX + right.minX) / 2
+        case (let left?, _):
+            targetX = left.maxX + 14
+        case (_, let right?):
+            targetX = right.minX - 14
+        default:
+            switch section {
+            case .alwaysHidden: targetX = managedMinX - 20
+            case .hidden: targetX = chevronFrame.minX - 15
+            case .visible: targetX = chevronFrame.maxX + 25
+            }
         }
-        let y = frame.midY
-        // Already in the right zone? Don't twitch the bar.
-        let alreadyPlaced: Bool
-        switch section {
-        case .alwaysHidden:
-            alreadyPlaced = frame.minX <= managedMinX + 2 && frame.maxX < chevronFrame.minX
-        case .hidden: alreadyPlaced = frame.maxX < chevronFrame.minX
-        case .visible: alreadyPlaced = frame.minX > chevronFrame.maxX
-        }
+        // Never approach screen corners (hot corners: Mission Control) or
+        // leave the trailing status area.
+        targetX = min(max(targetX, 200), screen.frame.maxX - 60)
+
+        // Skip only when the item already sits between the right neighbors.
+        let alreadyPlaced = abs(frame.midX - targetX) < max(frame.width, 20)
         guard !alreadyPlaced else { return }
-        NookLog.log("place: dragging \(id.rawValue) from x=\(frame.midX) to x=\(targetX)")
+
+        NookLog.log("place: dragging \(id.rawValue) x=\(frame.midX) → \(targetX) (section \(section))")
         await ItemMover.cmdDrag(
-            from: CGPoint(x: frame.midX, y: y),
-            to: CGPoint(x: targetX, y: y)
+            from: CGPoint(x: frame.midX, y: 12),
+            to: CGPoint(x: targetX, y: 12)
         )
-        snapshot = await engine.snapshot()
+        try? await Task.sleep(for: .milliseconds(300))
+        let after = await engine.snapshot()
+        snapshot = after
+        if let newFrame = after.items.first(where: { $0.id == id })?.frame {
+            NookLog.log("place: landed at x=\(newFrame.midX)")
+        } else {
+            NookLog.log("place: item not observable after drag")
+        }
         // The drag clicked outside Nook — hand focus back to the settings
         // window. Retried: the dragged icon's app can win an activation race
         // hundreds of ms later and steal focus back from a single attempt.
