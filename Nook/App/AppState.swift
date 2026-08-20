@@ -175,9 +175,15 @@ final class AppState {
         }
         hotkey?.register(settings.hotkey)
         ItemImageCache.preferBarIcons = settings.editorIconStyle == .barIcons
-        if settings.editorIconStyle == .barIcons, !CGPreflightScreenCaptureAccess() {
-            // System prompt (once); the style degrades to app icons until granted.
-            CGRequestScreenCaptureAccess()
+        if settings.editorIconStyle == .barIcons {
+            if !CGPreflightScreenCaptureAccess() {
+                // System prompt (once); the style degrades to app icons until
+                // granted — and macOS often applies the grant only after the
+                // app relaunches.
+                CGRequestScreenCaptureAccess()
+            } else if let items = snapshot?.items {
+                Task { await ItemImageCache.prewarmBarCaptures(items: items) }
+            }
         }
         separators?.sync(with: settings.separators)
         // Newly toggled-on extras get hosted wherever macOS pleases (left end

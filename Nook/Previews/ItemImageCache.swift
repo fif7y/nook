@@ -46,11 +46,63 @@ enum ItemImageCache {
                 width: frame.width * pixelScale,
                 height: frame.height * pixelScale
             )
-            guard let crop = shot.cropping(to: cropRect) else { continue }
-            let image = NSImage(cgImage: crop, size: NSSize(width: frame.width, height: frame.height))
-            barCaptures[item.id.rawValue] = image
+            guard let crop = shot.cropping(to: cropRect),
+                  let glyph = templateGlyph(from: crop)
+            else { continue }
+            barCaptures[item.id.rawValue] = glyph
         }
         NookLog.log("icons: prewarmed \(barCaptures.count) bar captures")
+    }
+
+    /// Raw screen crops carry the wallpaper tint and the item's padding.
+    /// Menubar glyphs are white-on-dark, so luminance IS the shape: turn luma
+    /// into alpha, tight-crop to the glyph's bounds, and mark the result as a
+    /// template so it renders like a native monochrome icon.
+    private static func templateGlyph(from crop: CGImage) -> NSImage? {
+        let width = crop.width
+        let height = crop.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        guard let ctx = CGContext(
+            data: &pixels, width: width, height: height,
+            bitsPerComponent: 8, bytesPerRow: width * 4,
+            space: CGColorSpaceCreateDeviceRGB(),
+            bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+        ) else { return nil }
+        ctx.draw(crop, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        // Alpha from luminance; track the glyph's bounding box while at it.
+        var minX = width, maxX = -1, minY = height, maxY = -1
+        for y in 0..<height {
+            for x in 0..<width {
+                let i = (y * width + x) * 4
+                let luma = (Int(pixels[i]) * 299 + Int(pixels[i + 1]) * 587 + Int(pixels[i + 2]) * 114) / 1000
+                let alpha = UInt8(luma)
+                pixels[i] = alpha
+                pixels[i + 1] = alpha
+                pixels[i + 2] = alpha
+                pixels[i + 3] = alpha
+                if alpha > 60 {
+                    minX = min(minX, x); maxX = max(maxX, x)
+                    minY = min(minY, y); maxY = max(maxY, y)
+                }
+            }
+        }
+        guard maxX >= minX, maxY >= minY else { return nil }
+        let margin = 2
+        let box = CGRect(
+            x: max(0, minX - margin),
+            y: max(0, minY - margin),
+            width: min(width, maxX + margin + 1) - max(0, minX - margin),
+            height: min(height, maxY + margin + 1) - max(0, minY - margin)
+        )
+        guard let masked = ctx.makeImage()?.cropping(to: box) else { return nil }
+        // Points at half the pixel size (captures are 2x).
+        let image = NSImage(
+            cgImage: masked,
+            size: NSSize(width: box.width / 2, height: box.height / 2)
+        )
+        image.isTemplate = true
+        return image
     }
 
     private static var nookItemSymbols: [String: String] = [:]

@@ -120,8 +120,14 @@ private struct EditorSectionView: View {
             }
 
             FlowLayout(spacing: 6) {
+                // iconStyle is passed down so the tiles re-render on toggle —
+                // reading it only inside the image cache invalidates nothing.
                 ForEach(items, id: \.id.rawValue) { item in
-                    ItemTile(item: item, section: section)
+                    ItemTile(
+                        item: item,
+                        section: section,
+                        iconStyle: appState.settings.editorIconStyle
+                    )
                 }
                 // Trailing landing slot: appears while a chip hovers the row
                 // itself (append position).
@@ -174,6 +180,7 @@ private struct ItemTile: View {
     @Environment(AppState.self) private var appState
     let item: ObservedItem
     let section: NookCore.Section
+    let iconStyle: EditorIconStyle
     @State private var hovered = false
     @State private var targeted = false
 
