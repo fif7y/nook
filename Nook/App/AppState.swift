@@ -286,6 +286,15 @@ final class AppState {
             case .visible: targetX = chevronFrame.maxX + 25
             }
         }
+        // The section's side of the chevron is a hard constraint — neighbor
+        // midpoints can land across the boundary (e.g. first-of-Visible aims
+        // "just left of its right neighbor", which is the chevron's far side).
+        switch section {
+        case .visible:
+            targetX = max(targetX, chevronFrame.maxX + 12)
+        case .hidden, .alwaysHidden:
+            targetX = min(targetX, chevronFrame.minX - 12)
+        }
         // Never approach screen corners (hot corners: Mission Control) or
         // leave the trailing status area.
         targetX = min(max(targetX, 200), screen.frame.maxX - 60)
