@@ -12,6 +12,9 @@ enum ItemImageCache {
     private static var appIcons: [String: NSImage] = [:]
 
     static func icon(for item: ItemID) -> NSImage? {
+        if item.rawValue.hasSuffix("Nook.MediaControls") {
+            return NSImage(systemSymbolName: "playpause.fill", accessibilityDescription: "Media Controls")
+        }
         if let bundleID = item.bundleID {
             if bundleID == ItemEnumeratorBundle.agent {
                 return systemSymbol(for: item)

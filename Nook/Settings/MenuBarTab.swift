@@ -42,8 +42,10 @@ struct MenuBarTab: View {
                     symbol: "moon"
                 )
 
-                SeparatorStrip()
+                NookItemsStrip()
                     .padding(.top, 6)
+
+                SeparatorStrip()
             }
             .padding(20)
         }
@@ -216,6 +218,38 @@ private struct ItemTile: View {
             return true
         } isTargeted: { targeting in
             targeted = targeting
+        }
+    }
+}
+
+// MARK: - Nook items
+
+/// Nook's own proxy items — they bypass the OS limitation that hides system
+/// extras under assertions, because Nook controls their visibility directly.
+private struct NookItemsStrip: View {
+    @Environment(AppState.self) private var appState
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "playpause")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("Media controls")
+                .font(.headline)
+            Text("Nook's own ⏯ item — click to play/pause, right-click for tracks. Lives in any section, unlike the system Now Playing.")
+                .font(.caption)
+                .foregroundStyle(.tertiary)
+            Spacer()
+            Toggle("", isOn: Binding(
+                get: { appState.settings.showMediaControls },
+                set: { enabled in
+                    appState.settings.showMediaControls = enabled
+                    appState.settingsChanged()
+                }
+            ))
+            .toggleStyle(.switch)
+            .controlSize(.small)
+            .labelsHidden()
         }
     }
 }

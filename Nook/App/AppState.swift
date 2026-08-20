@@ -30,6 +30,7 @@ final class AppState {
     private var rehideTimer: Timer?
     private var statusItem: NookStatusItem?
     private var separators: SeparatorManager?
+    private var mediaControls: MediaControlsItem?
     private var bandMonitor: MenuBarBandMonitor?
     private var hotkey: HotkeyManager?
     private var eventTask: Task<Void, Never>?
@@ -60,6 +61,7 @@ final class AppState {
         }
         separators = SeparatorManager(appState: self)
         separators?.sync(with: settings.separators)
+        syncMediaControls()
 
         let bandMonitor = MenuBarBandMonitor(appState: self)
         bandMonitor.start()
@@ -154,6 +156,7 @@ final class AppState {
         }
         hotkey?.register(settings.hotkey)
         separators?.sync(with: settings.separators)
+        syncMediaControls()
         Task {
             await engine.setSteadyExtras(settings.hideSystemExtras)
             await engine.setModel(settings.sectionModel)
@@ -314,9 +317,16 @@ final class AppState {
             }
             byID[id] = ObservedItem(id: id, frame: nil, appName: appName)
         }
+        // Nook's media item is section-manageable (visibility-based hiding);
+        // when hidden it's absent from AX, so ensure it's represented.
+        if settings.showMediaControls, byID[MediaControlsItem.itemID] == nil {
+            byID[MediaControlsItem.itemID] = ObservedItem(
+                id: MediaControlsItem.itemID, frame: nil, appName: "Media"
+            )
+        }
         let all = byID.values.filter {
             !$0.id.isSystemModule
-                && $0.id.bundleID != Bundle.main.bundleIdentifier
+                && ($0.id.bundleID != Bundle.main.bundleIdentifier || $0.id == MediaControlsItem.itemID)
                 && $0.id.bundleID?.hasPrefix("com.apple.") != true
                 && settings.sectionModel.section(of: $0.id) == section
         }
@@ -343,8 +353,38 @@ final class AppState {
 
     // MARK: - Effects
 
+    /// Nook-owned items (media controls) hide by their OWN visibility, not the
+    /// assertion — asserting away Nook's bundle would take the chevron too.
+    private var currentRevealedSections: Set<NookCore.Section> {
+        switch rehide.state {
+        case .revealed(let sections, _):
+            return sections
+        case .transitioning(target: .reveal(let sections, _), _):
+            // Track the transition's destination so Nook-owned items appear
+            // in the same swap as the assertion-managed ones.
+            return sections
+        default:
+            return []
+        }
+    }
+
+    private func syncMediaControls() {
+        if settings.showMediaControls {
+            if mediaControls == nil {
+                mediaControls = MediaControlsItem(appState: self)
+            }
+        } else {
+            mediaControls?.remove()
+            mediaControls = nil
+        }
+        mediaControls?.apply(model: settings.sectionModel, revealed: currentRevealedSections)
+    }
+
     private func dispatch(_ effects: [RehideEffect]) {
-        defer { statusItem?.updateSymbol(revealed: isRevealed) }
+        defer {
+            statusItem?.updateSymbol(revealed: isRevealed)
+            mediaControls?.apply(model: settings.sectionModel, revealed: currentRevealedSections)
+        }
         for effect in effects {
             switch effect {
             case .none:
@@ -456,7 +496,7 @@ final class AppState {
         var changed = false
         for item in snap.items {
             guard let bundle = item.id.bundleID,
-                  bundle != nookBundle,
+                  bundle != nookBundle || item.id == MediaControlsItem.itemID,
                   !bundle.hasPrefix("com.apple."),
                   let frame = item.frame
             else { continue }

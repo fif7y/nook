@@ -88,6 +88,10 @@ public struct SettingsStore: Codable, Equatable, Sendable {
     /// consistently hidden instead of jumping in and out on every transition.
     public var hideSystemExtras: Bool = true
 
+    /// Nook's own media-controls item (play/pause/next/prev via media keys).
+    /// Unlike the system Now Playing extra, it's section-manageable.
+    public var showMediaControls: Bool = false
+
     public var sectionModel = SectionModel()
     public var separators: [SeparatorSpec] = []
 
@@ -114,7 +118,7 @@ public struct SettingsStore: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case onboardingCompleted, launchAtLogin, showStatusItem, hotkey
         case revealTriggers, autoRehide, rehideDelay, rehideOnClickElsewhere
-        case hideSystemExtras, sectionModel, separators
+        case hideSystemExtras, showMediaControls, sectionModel, separators
         case displayTemplate, displayOverrides
     }
 
@@ -130,6 +134,7 @@ public struct SettingsStore: Codable, Equatable, Sendable {
         rehideDelay = try c.decodeIfPresent(TimeInterval.self, forKey: .rehideDelay) ?? defaults.rehideDelay
         rehideOnClickElsewhere = try c.decodeIfPresent(Bool.self, forKey: .rehideOnClickElsewhere) ?? defaults.rehideOnClickElsewhere
         hideSystemExtras = try c.decodeIfPresent(Bool.self, forKey: .hideSystemExtras) ?? defaults.hideSystemExtras
+        showMediaControls = try c.decodeIfPresent(Bool.self, forKey: .showMediaControls) ?? defaults.showMediaControls
         sectionModel = try c.decodeIfPresent(SectionModel.self, forKey: .sectionModel) ?? defaults.sectionModel
         separators = try c.decodeIfPresent([SeparatorSpec].self, forKey: .separators) ?? defaults.separators
         displayTemplate = try c.decodeIfPresent(DisplayBehavior.self, forKey: .displayTemplate) ?? defaults.displayTemplate
