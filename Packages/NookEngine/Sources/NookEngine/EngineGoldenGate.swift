@@ -24,6 +24,11 @@ public actor EngineGoldenGate: MenuBarEngine {
 
     private var model = SectionModel()
     private var revealedSections: Set<Section> = []
+    /// Steady-assertion mode: hold an assertion even when nothing is
+    /// concealable (allowlist = every observed bundle). Keeps macOS's
+    /// collateral-hidden extras (Now Playing, camera pill, AirDrop, Focus)
+    /// consistently gone, so the bar never reflows around them.
+    private var steadyExtras = true
     private var assertion: AssessmentAssertion?
     private var lastSnapshot: EngineSnapshot?
     private var started = false
@@ -65,6 +70,12 @@ public actor EngineGoldenGate: MenuBarEngine {
 
     public func setModel(_ model: SectionModel) async {
         self.model = model
+        await converge()
+    }
+
+    public func setSteadyExtras(_ enabled: Bool) async {
+        guard steadyExtras != enabled else { return }
+        steadyExtras = enabled
         await converge()
     }
 
@@ -148,19 +159,30 @@ public actor EngineGoldenGate: MenuBarEngine {
             return
         }
 
-        if concealable.isEmpty {
-            // Nothing to hide: no assertion at all (cleanest possible state).
+        if concealable.isEmpty, !steadyExtras {
+            // Nothing to hide and extras are allowed back: drop the assertion.
             invalidateAssertion()
             _ = await refreshSnapshot()
             return
         }
+        // With steadyExtras on, an empty concealable set still holds an
+        // assertion allowing every observed bundle — only the OS extras hide.
 
-        // Allowlist = every observed third-party bundle except the concealable.
+        // Allowlist = every third-party bundle except the concealable. Built
+        // from ALL running apps, not just observed items — a bundle without a
+        // status item is a harmless allow, and it means an app launched after
+        // this converge shows its new icon instead of being swallowed.
         var allowedBundles = Set<String>()
         for id in observedIDs {
             if let bundle = id.bundleID, !concealable.contains(bundle) {
                 allowedBundles.insert(bundle)
             }
+        }
+        let runningBundles = await MainActor.run {
+            NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier)
+        }
+        for bundle in runningBundles where !concealable.contains(bundle) {
+            allowedBundles.insert(bundle)
         }
 
         let previous = assertion
@@ -196,15 +218,18 @@ public actor EngineGoldenGate: MenuBarEngine {
         })
         // Verify-after-apply: poll until the concealed bundles actually drop
         // out of the AX tree (reflow propagation is not instant), bounded.
-        let verifyDeadline = Date().addingTimeInterval(3)
-        while Date() < verifyDeadline {
-            try? await Task.sleep(for: .milliseconds(250))
-            let check = await refreshSnapshot()
-            let stillVisible = check.items.contains { item in
-                guard let bundle = item.id.bundleID else { return false }
-                return concealable.contains(bundle)
+        // Nothing to verify on a reveal/extras-only converge — keep it snappy.
+        if !concealable.isEmpty {
+            let verifyDeadline = Date().addingTimeInterval(3)
+            while Date() < verifyDeadline {
+                try? await Task.sleep(for: .milliseconds(100))
+                let check = await refreshSnapshot()
+                let stillVisible = check.items.contains { item in
+                    guard let bundle = item.id.bundleID else { return false }
+                    return concealable.contains(bundle)
+                }
+                if !stillVisible { break }
             }
-            if !stillVisible { break }
         }
         let after = await refreshSnapshot()
         let stillVisible = after.items.contains { item in

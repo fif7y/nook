@@ -31,7 +31,7 @@ public struct RevealTriggers: Codable, Equatable, Sendable {
 
     public init(
         hoverEnabled: Bool = true,
-        hoverDelay: TimeInterval = 0.2,
+        hoverDelay: TimeInterval = 0.1,
         clickEnabled: Bool = true,
         doubleClickForAlwaysHidden: Bool = true
     ) {
@@ -83,6 +83,11 @@ public struct SettingsStore: Codable, Equatable, Sendable {
     public var rehideDelay: TimeInterval = 5
     public var rehideOnClickElsewhere: Bool = true
 
+    /// Hold the hide-assertion even while revealed (allowlist just widens).
+    /// Keeps macOS's collateral extras (Now Playing, camera pill, AirDrop…)
+    /// consistently hidden instead of jumping in and out on every transition.
+    public var hideSystemExtras: Bool = true
+
     public var sectionModel = SectionModel()
     public var separators: [SeparatorSpec] = []
 
@@ -101,6 +106,34 @@ public struct SettingsStore: Codable, Equatable, Sendable {
     public func behavior(forDisplayUUID uuid: String?) -> DisplayBehavior {
         guard let uuid else { return displayTemplate }
         return displayOverrides[uuid] ?? displayTemplate
+    }
+
+    // MARK: - Codable (resilient: new fields fall back to defaults instead of
+    // failing the whole decode and silently resetting the user's settings)
+
+    private enum CodingKeys: String, CodingKey {
+        case onboardingCompleted, launchAtLogin, showStatusItem, hotkey
+        case revealTriggers, autoRehide, rehideDelay, rehideOnClickElsewhere
+        case hideSystemExtras, sectionModel, separators
+        case displayTemplate, displayOverrides
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let defaults = SettingsStore()
+        onboardingCompleted = try c.decodeIfPresent(Bool.self, forKey: .onboardingCompleted) ?? defaults.onboardingCompleted
+        launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? defaults.launchAtLogin
+        showStatusItem = try c.decodeIfPresent(Bool.self, forKey: .showStatusItem) ?? defaults.showStatusItem
+        hotkey = try c.decodeIfPresent(HotkeySpec.self, forKey: .hotkey) ?? defaults.hotkey
+        revealTriggers = try c.decodeIfPresent(RevealTriggers.self, forKey: .revealTriggers) ?? defaults.revealTriggers
+        autoRehide = try c.decodeIfPresent(Bool.self, forKey: .autoRehide) ?? defaults.autoRehide
+        rehideDelay = try c.decodeIfPresent(TimeInterval.self, forKey: .rehideDelay) ?? defaults.rehideDelay
+        rehideOnClickElsewhere = try c.decodeIfPresent(Bool.self, forKey: .rehideOnClickElsewhere) ?? defaults.rehideOnClickElsewhere
+        hideSystemExtras = try c.decodeIfPresent(Bool.self, forKey: .hideSystemExtras) ?? defaults.hideSystemExtras
+        sectionModel = try c.decodeIfPresent(SectionModel.self, forKey: .sectionModel) ?? defaults.sectionModel
+        separators = try c.decodeIfPresent([SeparatorSpec].self, forKey: .separators) ?? defaults.separators
+        displayTemplate = try c.decodeIfPresent(DisplayBehavior.self, forKey: .displayTemplate) ?? defaults.displayTemplate
+        displayOverrides = try c.decodeIfPresent([String: DisplayBehavior].self, forKey: .displayOverrides) ?? defaults.displayOverrides
     }
 
     // MARK: - Persistence

@@ -87,13 +87,18 @@ final class MenuBarBandMonitor {
         }
     }
 
-    /// True while rehide should hold off: pointer in the band, or over an
-    /// elevated window (status-item menus, popovers, Nook's own panels).
+    /// True while rehide should hold off: pointer in the band, over a
+    /// menubar-anchored menu/popover, or interacting with Nook's own windows.
     func shouldDeferRehide() -> Bool {
         if pointerInBand { return true }
+        if NSApp.isActive { return true }  // user is in Nook settings/onboarding
         return pointerIsOverElevatedWindow()
     }
 
+    /// Deliberately narrow: only visible, menu/popover-sized windows at
+    /// elevated levels count. `layer > 0` alone matches the invisible
+    /// always-on-top helper windows half the utilities on a Mac keep around
+    /// (PopClip, Unclutter, Raycast…) — that overreach made rehide never fire.
     private func pointerIsOverElevatedWindow() -> Bool {
         let location = NSEvent.mouseLocation
         guard
@@ -106,10 +111,16 @@ final class MenuBarBandMonitor {
         let cgPoint = CGPoint(x: location.x, y: primary.frame.maxY - location.y)
         for window in windows {
             guard
-                let layer = window[kCGWindowLayer as String] as? Int, layer > 0,
+                let layer = window[kCGWindowLayer as String] as? Int,
+                // Status-item popovers and menus live in this level range;
+                // floating utility panels (level 3) and the Dock (20) don't count.
+                layer >= 24, layer <= 102,
+                let alpha = window[kCGWindowAlpha as String] as? CGFloat, alpha > 0.05,
                 let bounds = window[kCGWindowBounds as String] as? [String: CGFloat],
                 let x = bounds["X"], let y = bounds["Y"],
-                let width = bounds["Width"], let height = bounds["Height"]
+                let width = bounds["Width"], let height = bounds["Height"],
+                // Menu/popover-sized, not screen-covering overlays.
+                width < 900, height < 1200, width > 4, height > 4
             else { continue }
             if CGRect(x: x, y: y, width: width, height: height).contains(cgPoint) {
                 return true

@@ -67,6 +67,17 @@ struct GeneralSettingsTab: View {
                 Toggle("Rehide when clicking elsewhere", isOn: binding(\.rehideOnClickElsewhere))
             }
 
+            Section("System extras") {
+                Toggle(isOn: binding(\.hideSystemExtras)) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("Keep system extras hidden")
+                        Text("Now Playing, camera controls, AirDrop and Focus stay out of the bar — prevents icons shifting around on every reveal.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            }
+
             Section("New items") {
                 Picker("New menu bar items go to", selection: binding(\.sectionModel.newItemsDestination)) {
                     Text("Visible").tag(NookCore.Section.visible)

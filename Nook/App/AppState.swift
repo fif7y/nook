@@ -25,6 +25,15 @@ final class AppState {
     // MARK: - Lifecycle
 
     func start() {
+        // One-shot: snappier hover default (0.2 → 0.1) for stores saved
+        // before the default changed.
+        if !UserDefaults.standard.bool(forKey: "nook.migratedHoverDelay01"),
+           abs(settings.revealTriggers.hoverDelay - 0.2) < 0.011 {
+            settings.revealTriggers.hoverDelay = 0.1
+            settings.save()
+        }
+        UserDefaults.standard.set(true, forKey: "nook.migratedHoverDelay01")
+
         rehide.policy = settings.rehidePolicy
         engineCanHide = engine.capabilities.canHide
 
@@ -55,6 +64,7 @@ final class AppState {
 
         Task {
             await engine.start()
+            await engine.setSteadyExtras(settings.hideSystemExtras)
             await engine.setModel(settings.sectionModel)
             snapshot = await engine.snapshot()
             // Startup state: everything the model says is hidden, is hidden.
@@ -125,7 +135,10 @@ final class AppState {
             statusItem = nil
         }
         hotkey?.register(settings.hotkey)
-        Task { await engine.setModel(settings.sectionModel) }
+        Task {
+            await engine.setSteadyExtras(settings.hideSystemExtras)
+            await engine.setModel(settings.sectionModel)
+        }
     }
 
     // MARK: - Effects
@@ -244,7 +257,12 @@ final class AppState {
             adoptSectionsFromBar()
             Task { snapshot = await engine.snapshot() }
         case .itemsChanged:
-            Task { snapshot = await engine.snapshot() }
+            // Re-converge so a newly appeared bundle joins the allowlist (or
+            // gets routed to its configured new-items section later, M4).
+            Task {
+                await engine.setModel(settings.sectionModel)
+                snapshot = await engine.snapshot()
+            }
         case .assertionTornDown:
             // Recovery = schedule a converge through the normal path.
             dispatch(rehide.handle(.concealRequested))
