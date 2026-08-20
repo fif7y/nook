@@ -142,21 +142,18 @@ final class ExtrasManager {
                 item.button?.animator().alphaValue = 1
             }
         } else {
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.18
-                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
-                item.button?.animator().alphaValue = 0
-            }
-            // Start the gap-close at the fade's midpoint — sequencing them
-            // (fade completes, then close) reads as stop-and-go; overlapped,
-            // they blend into one continuous motion.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) { [weak self] in
+            // The gap must close in the SAME coalesced reflow as the assertion
+            // (any later width change is a second agent animation — bounce and
+            // all). The glyph outlives its item as a ghost overlay: a snapshot
+            // floating at the icon's screen position, fading while the bar
+            // reflows beneath it — gap and fade concurrent on independent
+            // layers, exactly how the agent renders third-party conceals.
+            showFadingGhost(for: item)
+            item.length = 0
+            item.button?.alphaValue = 0
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
                 guard let self, self.lastVisible[id] == false else { return }
-                self.items[id]?.length = 0
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
-                    guard let self, self.lastVisible[id] == false else { return }
-                    self.items[id]?.isVisible = false
-                }
+                self.items[id]?.isVisible = false
             }
         }
     }
@@ -168,6 +165,43 @@ final class ExtrasManager {
             revealed: appState.revealedSectionsForExtras,
             systemCameraPillVisible: appState.systemCameraPillVisible
         )
+    }
+
+    /// Snapshot the button and fade the snapshot at its old screen position.
+    private func showFadingGhost(for item: NSStatusItem) {
+        guard
+            let button = item.button,
+            let buttonWindow = button.window,
+            let rep = button.bitmapImageRepForCachingDisplay(in: button.bounds)
+        else { return }
+        button.cacheDisplay(in: button.bounds, to: rep)
+        let image = NSImage(size: button.bounds.size)
+        image.addRepresentation(rep)
+
+        let screenRect = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
+        let ghost = NSWindow(
+            contentRect: screenRect,
+            styleMask: .borderless,
+            backing: .buffered,
+            defer: false
+        )
+        ghost.isOpaque = false
+        ghost.backgroundColor = .clear
+        ghost.level = .statusBar
+        ghost.ignoresMouseEvents = true
+        ghost.hasShadow = false
+        let imageView = NSImageView(image: image)
+        imageView.frame = NSRect(origin: .zero, size: screenRect.size)
+        ghost.contentView = imageView
+        ghost.orderFrontRegardless()
+
+        NSAnimationContext.runAnimationGroup({ ctx in
+            ctx.duration = 0.22
+            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
+            ghost.animator().alphaValue = 0
+        }, completionHandler: {
+            ghost.orderOut(nil)
+        })
     }
 
     // MARK: Item construction
