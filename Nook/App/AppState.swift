@@ -11,7 +11,9 @@ import SwiftUI
 final class AppState {
     let engine = EngineGoldenGate()
     var settings = SettingsStore.load()
-    private(set) var snapshot: EngineSnapshot?
+    private(set) var snapshot: EngineSnapshot? {
+        didSet { healAliasIDs() }
+    }
     private(set) var accessibilityGranted = AXIsProcessTrusted()
     private(set) var engineCanHide = true
     /// While the settings window is open, auto-rehide is fully suppressed —
@@ -397,6 +399,53 @@ final class AppState {
         }
     }
 
+    /// MenuBarAgent derives item tags from AX titles, and those drift — the
+    /// same Velja item has been "Item-0" and "Left and right arrows in a
+    /// filled circle" on different days. Hiding is per-bundle, so a bundle is
+    /// never half-live: a stored ID whose bundle HAS live items but which
+    /// isn't itself live is a stale alias of the live one. Remap it so the
+    /// section model (and every write keyed off it) tracks the current tag.
+    private func healAliasIDs() {
+        guard let snap = snapshot else { return }
+        var liveByBundle: [String: [ItemID]] = [:]
+        for item in snap.items {
+            guard let bundle = item.id.bundleID else { continue }
+            liveByBundle[bundle, default: []].append(item.id)
+        }
+        var model = settings.sectionModel
+        var changed = false
+        let storedIDs = Set(model.assignments.keys).union(model.order.values.joined())
+        for stored in storedIDs {
+            guard let bundle = stored.bundleID,
+                  bundle != Bundle.main.bundleIdentifier,  // extras IDs are stable
+                  let live = liveByBundle[bundle],
+                  !live.contains(stored),
+                  live.count == 1,  // multi-item bundles: can't tell which twin
+                  let liveID = live.first
+            else { continue }
+            if let section = model.assignments.removeValue(forKey: stored),
+               model.assignments[liveID] == nil {
+                model.assignments[liveID] = section
+            }
+            for key in model.order.keys {
+                guard var order = model.order[key], let index = order.firstIndex(of: stored) else { continue }
+                if order.contains(liveID) {
+                    order.remove(at: index)
+                } else {
+                    order[index] = liveID
+                }
+                model.order[key] = order
+            }
+            changed = true
+            NookLog.log("heal: alias \(stored.rawValue) → \(liveID.rawValue)")
+        }
+        if changed {
+            settings.sectionModel = model
+            settings.save()
+            Task { await engine.setModel(model) }
+        }
+    }
+
     /// Items the layout editor shows for a section: third-party only (Apple
     /// items are out of scope), Nook's own items excluded, and CONCEALED items
     /// included — they drop out of AX observation but absolutely belong in the
@@ -420,7 +469,19 @@ final class AppState {
                 byID[id] = ObservedItem(id: id, frame: nil, appName: spec.shortcutName ?? nil)
             }
         }
+        // Drop stale twins the concealed set may still remember: a bundle is
+        // never half-concealed, so a frame-nil entry whose bundle has a live
+        // item is an old alias, not a second icon. (Nook's own extras are
+        // exempt — they legitimately mix live and hidden items.)
+        let liveBundles = Set(
+            (snapshot?.items ?? []).compactMap(\.id.bundleID)
+        ).subtracting([Bundle.main.bundleIdentifier ?? ""])
         let all = byID.values.filter { item in
+            if item.frame == nil,
+               let bundle = item.id.bundleID,
+               liveBundles.contains(bundle) {
+                return false
+            }
             guard !item.id.isSystemModule,
                   settings.sectionModel.section(of: item.id) == section
             else { return false }
@@ -512,8 +573,13 @@ final class AppState {
                     lastSettleAt = Date()
                     // Reveals are the only window where hidden items are
                     // capturable — refresh the bar-glyph cache opportunistically.
-                    if let items = snapshot?.items {
-                        Task { await ItemImageCache.prewarmBarCaptures(items: items) }
+                    // Wait out the agent's slide animation and re-snapshot:
+                    // capturing at settle time crops mid-flight pixels against
+                    // final AX frames and the glyphs come out shredded.
+                    Task { [engine] in
+                        try? await Task.sleep(for: .milliseconds(450))
+                        let settled = await engine.snapshot()
+                        await ItemImageCache.prewarmBarCaptures(items: settled.items)
                     }
                     dispatch(rehide.handle(.transitionSettled))
                 }

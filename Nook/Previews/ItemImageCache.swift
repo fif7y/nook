@@ -18,7 +18,10 @@ enum ItemImageCache {
     static var preferBarIcons = false
 
     /// One display screenshot, cropped per visible item. Prewarm during
-    /// reveals — concealed items can't be captured at all.
+    /// reveals — concealed items can't be captured at all. (Per-window SCK
+    /// capture would give true alpha, but macOS 27 exposes the whole bar as
+    /// one WindowServer "Menubar" window that captures blank — items don't
+    /// exist as individual SCWindows. Region capture + keying is all there is.)
     static func prewarmBarCaptures(items: [ObservedItem]) async {
         guard preferBarIcons, CGPreflightScreenCaptureAccess() else { return }
         guard
@@ -47,20 +50,22 @@ enum ItemImageCache {
                 height: frame.height * pixelScale
             )
             guard let crop = shot.cropping(to: cropRect),
-                  let glyph = templateGlyph(from: crop)
+                  let glyph = keyedGlyph(from: crop, scale: pixelScale)
             else { continue }
             barCaptures[item.id.rawValue] = glyph
         }
         NookLog.log("icons: prewarmed \(barCaptures.count) bar captures")
     }
 
-    /// Raw screen crops carry the wallpaper tint and the item's padding.
-    /// Menubar glyphs are white-on-dark, so luminance IS the shape: turn luma
-    /// into alpha, tight-crop to the glyph's bounds, and mark the result as a
-    /// template so it renders like a native monochrome icon.
-    private static func templateGlyph(from crop: CGImage) -> NSImage? {
+    /// Screen crops carry the bar material (blurred wallpaper) behind the
+    /// glyph. The material is smooth, so the crop's border — item padding,
+    /// never glyph — is a faithful background sample: subtract a per-channel
+    /// border median with a soft ramp to get alpha. Monochrome glyphs become
+    /// templates (native adaptive rendering); colored glyphs keep their color.
+    private static func keyedGlyph(from crop: CGImage, scale: CGFloat) -> NSImage? {
         let width = crop.width
         let height = crop.height
+        guard width > 8, height > 8 else { return nil }
         var pixels = [UInt8](repeating: 0, count: width * height * 4)
         guard let ctx = CGContext(
             data: &pixels, width: width, height: height,
@@ -70,24 +75,58 @@ enum ItemImageCache {
         ) else { return nil }
         ctx.draw(crop, in: CGRect(x: 0, y: 0, width: width, height: height))
 
-        // Alpha from luminance; track the glyph's bounding box while at it.
+        // Background = per-channel median of the 2px border ring.
+        var reds: [UInt8] = [], greens: [UInt8] = [], blues: [UInt8] = []
+        for y in 0..<height {
+            for x in 0..<width where x < 2 || x >= width - 2 || y < 2 || y >= height - 2 {
+                let i = (y * width + x) * 4
+                reds.append(pixels[i]); greens.append(pixels[i + 1]); blues.append(pixels[i + 2])
+            }
+        }
+        func median(_ values: inout [UInt8]) -> Int { values.sort(); return Int(values[values.count / 2]) }
+        let bgR = median(&reds), bgG = median(&greens), bgB = median(&blues)
+
+        // Distance from background → alpha (soft ramp kills the residual
+        // veil that a hard luminance threshold leaves around the glyph).
+        var alphas = [UInt8](repeating: 0, count: width * height)
         var minX = width, maxX = -1, minY = height, maxY = -1
+        var coloredPixels = 0
         for y in 0..<height {
             for x in 0..<width {
                 let i = (y * width + x) * 4
-                let luma = (Int(pixels[i]) * 299 + Int(pixels[i + 1]) * 587 + Int(pixels[i + 2]) * 114) / 1000
-                let alpha = UInt8(luma)
-                pixels[i] = alpha
-                pixels[i + 1] = alpha
-                pixels[i + 2] = alpha
-                pixels[i + 3] = alpha
-                if alpha > 60 {
+                let r = Int(pixels[i]), g = Int(pixels[i + 1]), b = Int(pixels[i + 2])
+                let distance = max(abs(r - bgR), abs(g - bgG), abs(b - bgB))
+                let alpha = distance <= 14 ? 0 : min(255, (distance - 14) * 255 / 46)
+                alphas[y * width + x] = UInt8(alpha)
+                if alpha > 128 {
                     minX = min(minX, x); maxX = max(maxX, x)
                     minY = min(minY, y); maxY = max(maxY, y)
+                    if max(abs(r - g), abs(g - b), abs(r - b)) > 30 {
+                        coloredPixels += 1
+                    }
                 }
             }
         }
         guard maxX >= minX, maxY >= minY else { return nil }
+        let isTemplate = coloredPixels < 12
+
+        for y in 0..<height {
+            for x in 0..<width {
+                let i = (y * width + x) * 4
+                let alpha = Int(alphas[y * width + x])
+                if isTemplate {
+                    // Only alpha matters for templates.
+                    pixels[i] = UInt8(alpha); pixels[i + 1] = UInt8(alpha); pixels[i + 2] = UInt8(alpha)
+                } else {
+                    // Premultiply the true color by the keyed alpha.
+                    pixels[i] = UInt8(Int(pixels[i]) * alpha / 255)
+                    pixels[i + 1] = UInt8(Int(pixels[i + 1]) * alpha / 255)
+                    pixels[i + 2] = UInt8(Int(pixels[i + 2]) * alpha / 255)
+                }
+                pixels[i + 3] = UInt8(alpha)
+            }
+        }
+
         let margin = 2
         let box = CGRect(
             x: max(0, minX - margin),
@@ -96,12 +135,11 @@ enum ItemImageCache {
             height: min(height, maxY + margin + 1) - max(0, minY - margin)
         )
         guard let masked = ctx.makeImage()?.cropping(to: box) else { return nil }
-        // Points at half the pixel size (captures are 2x).
         let image = NSImage(
             cgImage: masked,
-            size: NSSize(width: box.width / 2, height: box.height / 2)
+            size: NSSize(width: box.width / scale, height: box.height / scale)
         )
-        image.isTemplate = true
+        image.isTemplate = isTemplate
         return image
     }
 
