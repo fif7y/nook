@@ -187,7 +187,11 @@ final class AppState {
         settings.save()
         NookLog.log("editor: move \(id.rawValue) → \(section) before=\(beforeID?.rawValue ?? "end")")
         Task { await engine.setModel(model) }
-        scheduleApplyOrder()
+        // Deliberately NO physical order apply here: that requires restarting
+        // MenuBarAgent, which rebuilds the entire menubar — reads as "the app
+        // quit and relaunched". Hiding is assertion-based and needs no
+        // position change; exact positions stay the domain of native ⌘-drag,
+        // which macOS applies without any restart.
     }
 
     /// The on-screen left-to-right order of a section right now (fallback when
