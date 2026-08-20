@@ -93,6 +93,7 @@ final class AppState {
             // swaps — the only way their motion matches everything else's.
             await engine.setReflowCompanion { [weak self] revealed in
                 guard let self else { return }
+                NookLog.log("companion: fired revealed=\(revealed.map(\.rawValue).sorted())")
                 self.extras?.apply(
                     model: self.settings.sectionModel,
                     revealed: revealed,
@@ -396,6 +397,13 @@ final class AppState {
         }
         let explicit = settings.sectionModel.order[section] ?? []
         return all.sorted { lhs, rhs in
+            // Nook extras pin to the LEFT edge of their section: a leftmost
+            // item's width changes displace nobody (the bar is right-anchored,
+            // growth extends into empty space) — the precondition for their
+            // reveal/conceal riding the reflow without shuffling neighbors.
+            let lExtra = Self.isNookExtraID(lhs.id) ? 0 : 1
+            let rExtra = Self.isNookExtraID(rhs.id) ? 0 : 1
+            if lExtra != rExtra { return lExtra < rExtra }
             let li = explicit.firstIndex(of: lhs.id) ?? Int.max
             let ri = explicit.firstIndex(of: rhs.id) ?? Int.max
             if li != ri { return li < ri }

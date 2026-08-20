@@ -128,18 +128,28 @@ final class ExtrasManager {
     private func setVisible(_ visible: Bool, for id: UUID, item: NSStatusItem) {
         guard lastVisible[id] != visible else { return }
         lastVisible[id] = visible
+        NookLog.log("extras: \(specs[id]?.itemTitle ?? "?") → \(visible ? "show" : "hide (ghost)")")
         // Runs as the engine's reflow companion, so timing coincides with the
         // assertion swap. The glyph FADES like the agent fades its items —
         // safe now that sections are physically contiguous (the late gap-close
         // only displaces neighbors that are themselves invisible mid-swap; an
         // instant snap read as an unanimated pop).
         if visible {
+            // Attach silently at FULL width right at companion time — extras
+            // are pinned leftmost in their section, so the width lands in
+            // empty left-edge space and displaces nothing. The glyph then
+            // fades in ~80ms later, in step with the agent fading in the
+            // assertion-revealed items during its reflow.
             item.isVisible = true
             item.length = NSStatusItem.squareLength
-            NSAnimationContext.runAnimationGroup { ctx in
-                ctx.duration = 0.22
-                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
-                item.button?.animator().alphaValue = 1
+            item.button?.alphaValue = 0
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
+                guard let self, self.lastVisible[id] == true else { return }
+                NSAnimationContext.runAnimationGroup { ctx in
+                    ctx.duration = 0.22
+                    ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
+                    self.items[id]?.button?.animator().alphaValue = 1
+                }
             }
         } else {
             // The gap must close in the SAME coalesced reflow as the assertion
