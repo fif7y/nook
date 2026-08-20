@@ -14,6 +14,17 @@ final class AppState {
     private(set) var snapshot: EngineSnapshot?
     private(set) var accessibilityGranted = AXIsProcessTrusted()
     private(set) var engineCanHide = true
+    /// While the settings window is open, auto-rehide is fully suppressed —
+    /// the user is mid-workflow between the editor and the bar, and nothing
+    /// should collapse under them. Closing the window re-conceals.
+    var settingsWindowVisible = false {
+        didSet {
+            guard oldValue != settingsWindowVisible else { return }
+            if !settingsWindowVisible {
+                concealNow()
+            }
+        }
+    }
 
     private var rehide = RehideStateMachine()
     private var rehideTimer: Timer?
@@ -273,7 +284,7 @@ final class AppState {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                if self.bandMonitor?.shouldDeferRehide() == true {
+                if self.settingsWindowVisible || self.bandMonitor?.shouldDeferRehide() == true {
                     self.scheduleRehideTimer(at: Date().addingTimeInterval(1.5))
                 } else {
                     self.rehideTriggered(.delayExpired)

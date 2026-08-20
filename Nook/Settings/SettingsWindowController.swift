@@ -6,14 +6,17 @@
 import AppKit
 import SwiftUI
 
-final class SettingsWindowController {
+final class SettingsWindowController: NSObject, NSWindowDelegate {
     static let shared = SettingsWindowController()
     private var window: NSWindow?
+    private weak var appState: AppState?
 
     func show(appState: AppState) {
+        self.appState = appState
         if let window {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate()
+            appState.settingsWindowVisible = true
             return
         }
         let hosting = NSHostingController(
@@ -25,8 +28,14 @@ final class SettingsWindowController {
         window.isReleasedWhenClosed = false
         window.setContentSize(NSSize(width: 560, height: 520))
         window.center()
+        window.delegate = self
         self.window = window
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
+        appState.settingsWindowVisible = true
+    }
+
+    func windowWillClose(_ notification: Notification) {
+        appState?.settingsWindowVisible = false
     }
 }
