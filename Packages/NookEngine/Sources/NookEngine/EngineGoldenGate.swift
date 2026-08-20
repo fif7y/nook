@@ -205,8 +205,10 @@ public actor EngineGoldenGate: MenuBarEngine {
         if assertion != nil,
            activeConcealable == concealable,
            let activeAllowlist, activeAllowlist.isSuperset(of: allowedBundles) {
+            NookLog.log("converge: no-op (concealable=\(concealable.count), allow=\(allowedBundles.count))")
             return
         }
+        NookLog.log("converge: swapping — concealable=\(concealable.sorted()), allow=\(allowedBundles.count), revealed=\(revealedSections.count)")
 
         let previous = assertion
         // Bounded wait: the completion is async (and can be a dud) — a stuck
@@ -235,7 +237,10 @@ public actor EngineGoldenGate: MenuBarEngine {
         previous?.invalidate()
 
         if !activated {
+            NookLog.log("converge: assertion activation FAILED (handle=\(handle == nil ? "nil" : "live"))")
             eventContinuation.yield(.convergeFailed("assertion activation failed"))
+        } else {
+            NookLog.log("converge: assertion active")
         }
         let concealed = Set(observedIDs.filter { id in
             guard let bundle = id.bundleID else { return false }
@@ -262,6 +267,7 @@ public actor EngineGoldenGate: MenuBarEngine {
             return concealable.contains(bundle)
         }
         if stillVisible {
+            NookLog.log("converge: STILL VISIBLE after verify window")
             eventContinuation.yield(.convergeFailed("concealed items still visible after verify window"))
         }
         lastSnapshot = EngineSnapshot(

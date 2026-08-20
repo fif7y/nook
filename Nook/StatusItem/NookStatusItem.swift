@@ -5,6 +5,7 @@
 
 import AppKit
 import NookCore
+import NookEngine
 
 final class NookStatusItem {
     private let item: NSStatusItem
@@ -39,12 +40,16 @@ final class NookStatusItem {
     }
 
     @objc private func clicked() {
-        guard let event = NSApp.currentEvent, let appState else { return }
-        if event.type == .rightMouseUp {
+        guard let appState else { return }
+        // currentEvent is nil for synthetic AX presses (VoiceOver etc.) —
+        // treat those as a plain left-click toggle instead of bailing.
+        let event = NSApp.currentEvent
+        NookLog.log("statusItem clicked: type=\(event?.type.rawValue ?? 0)")
+        if event?.type == .rightMouseUp {
             item.menu = Self.contextMenu(appState: appState)
             item.button?.performClick(nil)
             item.menu = nil
-        } else if event.modifierFlags.contains(.option) {
+        } else if event?.modifierFlags.contains(.option) == true {
             appState.reveal([.hidden, .alwaysHidden], reason: .statusItem)
         } else {
             appState.toggle(reason: .statusItem)

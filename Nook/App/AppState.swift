@@ -88,7 +88,9 @@ final class AppState {
     // MARK: - Intents (UI + monitors call these)
 
     func toggle(reason: RevealReason) {
-        dispatch(rehide.handle(.toggleRequested([.hidden], reason)))
+        let effects = rehide.handle(.toggleRequested([.hidden], reason))
+        NookLog.log("toggle(\(reason)) state=\(rehide.state) effects=\(effects)")
+        dispatch(effects)
     }
 
     func reveal(_ sections: Set<NookCore.Section>, reason: RevealReason) {
@@ -151,14 +153,20 @@ final class AppState {
                 break
             case .reveal(let sections):
                 Task {
+                    NookLog.log("effect reveal \(sections) → engine")
                     await engine.reveal(sections)
                     snapshot = await engine.snapshot()
+                    NookLog.log("effect reveal settled")
+                    lastSettleAt = Date()
                     dispatch(rehide.handle(.transitionSettled))
                 }
             case .conceal:
                 Task {
+                    NookLog.log("effect conceal → engine")
                     await engine.conceal()
                     snapshot = await engine.snapshot()
+                    NookLog.log("effect conceal settled")
+                    lastSettleAt = Date()
                     dispatch(rehide.handle(.transitionSettled))
                 }
             case .armTimer(let deadline):
@@ -209,9 +217,24 @@ final class AppState {
     /// makes side-change the safe adoption trigger: a settings-assigned item
     /// still sitting on its old side is never "corrected" back.
     private var lastAdoptionSides: [String: Bool] = [:]
+    /// Set on every reveal/conceal settle; adoption holds off while the bar is
+    /// mid-reflow.
+    private var lastSettleAt: Date = .distantPast
+
+    private var isTransitioning: Bool {
+        if case .transitioning = rehide.state { return true }
+        return false
+    }
 
     private func adopt(from snap: EngineSnapshot) {
         guard settings.showStatusItem else { return }
+        // Never adopt from a bar that's mid-transition or still reflowing —
+        // during the oscillation bug this path watched items whipsaw across
+        // the chevron and wiped every hidden assignment.
+        guard !isTransitioning, Date().timeIntervalSince(lastSettleAt) > 1.5 else {
+            NookLog.log("adopt: skipped (transitioning or settling)")
+            return
+        }
         let nookBundle = Bundle.main.bundleIdentifier ?? "app.fif7y.Nook"
         guard
             let chevron = snap.items.first(where: {
