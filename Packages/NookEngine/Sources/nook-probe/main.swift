@@ -10,6 +10,7 @@
 import AppKit
 import ApplicationServices
 import Foundation
+import NookCore
 import NookEngine
 
 let args = Array(CommandLine.arguments.dropFirst())
@@ -101,6 +102,74 @@ case "ax":
         }
     }
     describe(app, depth: 0)
+
+case "engine-test":
+    guard args.count >= 2 else {
+        fail("usage: nook-probe engine-test <bundleIDToHide> [soakCycles]")
+    }
+    let bundleToHide = args[1]
+    let soakCycles = args.count >= 3 ? Int(args[2]) ?? 0 : 0
+    // Keep the main run loop pumping: assertion completions and AX callbacks
+    // are main-queue delivered. Blocking main with a semaphore deadlocks.
+    nonisolated(unsafe) var testDone = false
+    Task {
+        let engine = EngineGoldenGate()
+        Task {
+            for await event in engine.events {
+                print("  [engine event] \(event)")
+            }
+        }
+        await engine.start()
+
+        let before = await engine.snapshot()
+        print("observed \(before.items.count) items; native overflow: \(before.nativeOverflowActive)")
+        let target = before.items.first { $0.id.bundleID == bundleToHide }
+        guard let target else {
+            print("FAIL: \(bundleToHide) not observed in the menubar")
+            testDone = true
+            return
+        }
+        print("target: \(target.id.rawValue) at \(target.frame.map(String.init(describing:)) ?? "?")")
+
+        var model = SectionModel()
+        model.assignments[target.id] = .hidden
+        await engine.setModel(model)
+        var check = await engine.snapshot()
+        let hiddenOK = !check.items.contains { $0.id.bundleID == bundleToHide }
+        print("after conceal: target \(hiddenOK ? "GONE ✓" : "STILL VISIBLE ✗")")
+
+        await engine.reveal([.hidden])
+        check = await engine.snapshot()
+        let revealedOK = check.items.contains { $0.id.bundleID == bundleToHide }
+        print("after reveal: target \(revealedOK ? "BACK ✓" : "MISSING ✗")")
+
+        var soakFailures = 0
+        if soakCycles > 0 {
+            print("soak: \(soakCycles) conceal/reveal cycles…")
+            for cycle in 1...soakCycles {
+                await engine.conceal()
+                let concealed = await engine.snapshot()
+                let concealedOK = !concealed.items.contains { $0.id.bundleID == bundleToHide }
+                await engine.reveal([.hidden])
+                let revealed = await engine.snapshot()
+                let cycleOK = concealedOK && revealed.items.contains { $0.id.bundleID == bundleToHide }
+                if !cycleOK {
+                    soakFailures += 1
+                    print("  cycle \(cycle): FAIL (concealed=\(concealedOK))")
+                }
+            }
+            print("soak result: \(soakCycles - soakFailures)/\(soakCycles) clean cycles")
+        }
+
+        await engine.conceal()
+        await engine.setModel(SectionModel())  // restore: nothing hidden
+        await engine.stop()
+        print(hiddenOK && revealedOK && soakFailures == 0 ? "ENGINE TEST PASS" : "ENGINE TEST FAIL")
+        testDone = true
+    }
+    while !testDone {
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
+    }
 
 default:
     print("""

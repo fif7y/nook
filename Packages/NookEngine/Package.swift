@@ -8,6 +8,9 @@ let package = Package(
         .library(name: "NookEngine", targets: ["NookEngine"]),
         .executable(name: "nook-probe", targets: ["nook-probe"]),
     ],
+    dependencies: [
+        .package(path: "../NookCore"),
+    ],
     targets: [
         // ObjC shim: dlopen/NSClassFromString access to MenuBarClientCore's
         // assessment-mode classes. Kept ObjC so exceptions from private API
@@ -18,7 +21,10 @@ let package = Package(
         ),
         .target(
             name: "NookEngine",
-            dependencies: ["NookEngineObjC"],
+            dependencies: [
+                "NookEngineObjC",
+                .product(name: "NookCore", package: "NookCore"),
+            ],
             path: "Sources/NookEngine"
         ),
         // M1 spike harness. Throwaway: proves hide/reorder/enumerate/click on
