@@ -28,6 +28,10 @@ final class OnboardingController {
         window.setContentSize(NSSize(width: 640, height: 480))
         window.center()
         window.isReleasedWhenClosed = false
+        // Onboarding must not get lost behind other apps' windows — an
+        // LSUIElement app has no dock icon to recover it from.
+        window.level = .floating
+        window.collectionBehavior = [.moveToActiveSpace]
         self.window = window
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
