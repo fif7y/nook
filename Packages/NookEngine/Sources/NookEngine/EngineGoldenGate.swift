@@ -30,6 +30,11 @@ public actor EngineGoldenGate: MenuBarEngine {
     /// consistently gone, so the bar never reflows around them.
     private var steadyExtras = true
     private var assertion: AssessmentAssertion?
+    /// The allowlist/concealable pair the active assertion was built with.
+    /// Converging to an equivalent state is a NO-OP — without this,
+    /// converge→reflow→itemsChanged→converge oscillates forever.
+    private var activeAllowlist: Set<String>?
+    private var activeConcealable: Set<String>?
     private var lastSnapshot: EngineSnapshot?
     private var started = false
 
@@ -185,6 +190,17 @@ public actor EngineGoldenGate: MenuBarEngine {
             allowedBundles.insert(bundle)
         }
 
+        // Idempotence: an equivalent state under a live assertion = already
+        // converged. Skip the swap — this is what breaks event feedback loops.
+        // Superset check (not equality): an app quitting leaves a harmless
+        // stale allow entry and must not cause a swap; a NEW bundle missing
+        // from the active allowlist must.
+        if assertion != nil,
+           activeConcealable == concealable,
+           let activeAllowlist, activeAllowlist.isSuperset(of: allowedBundles) {
+            return
+        }
+
         let previous = assertion
         // Bounded wait: the completion is async (and can be a dud) — a stuck
         // activation must never wedge the converge path. 3s is generous; the
@@ -196,6 +212,8 @@ public actor EngineGoldenGate: MenuBarEngine {
         var activated = false
         if let handle {
             assertion = handle
+            activeAllowlist = allowedBundles
+            activeConcealable = concealable
             let deadline = Date().addingTimeInterval(3)
             while Date() < deadline {
                 if let result = activationBox.result {
@@ -263,6 +281,8 @@ public actor EngineGoldenGate: MenuBarEngine {
     private func invalidateAssertion() {
         assertion?.invalidate()
         assertion = nil
+        activeAllowlist = nil
+        activeConcealable = nil
     }
 
     private func refreshSnapshot() async -> EngineSnapshot {
