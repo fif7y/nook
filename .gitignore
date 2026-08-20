@@ -1,0 +1,9 @@
+.DS_Store
+/build
+DerivedData/
+.build/
+*.xcodeproj
+!project.yml
+xcuserdata/
+*.dmg
+/Thaw reference/
