@@ -70,22 +70,30 @@ struct GeneralSettingsTab: View {
                     LabeledSlider(
                         title: "After",
                         value: binding(\.rehideDelay),
-                        range: 0.25...10,
-                        format: "%.2gs"
+                        range: 0...10,
+                        format: "%.2gs",
+                        zeroLabel: "Instant"
                     )
                 }
                 Toggle("Rehide when clicking elsewhere", isOn: binding(\.rehideOnClickElsewhere))
             }
 
-            Section("System extras") {
-                Toggle(isOn: binding(\.hideSystemExtras)) {
+            Section {
+                Picker(selection: binding(\.hideSystemExtras)) {
+                    Text("Always hidden — steadiest bar").tag(true)
+                    Text("Show while everything is revealed").tag(false)
+                } label: {
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Keep system extras hidden")
-                        Text("Now Playing, camera controls, AirDrop and Focus stay out of the bar — prevents icons shifting around on every reveal.")
+                        Text("System extras")
+                        Text("Now Playing, camera controls, AirDrop, Focus")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
+                .pickerStyle(.radioGroup)
+                Text("macOS hides these whenever any icons are concealed — they can only ever appear while the whole bar is revealed (double-click, or ⌥-click the chevron).")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
             }
 
             Section("New items") {
