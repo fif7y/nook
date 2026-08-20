@@ -144,6 +144,7 @@ final class AppState {
     // MARK: - Effects
 
     private func dispatch(_ effects: [RehideEffect]) {
+        defer { statusItem?.updateSymbol(revealed: isRevealed) }
         for effect in effects {
             switch effect {
             case .none:

@@ -69,14 +69,35 @@ import Testing
         #expect(effects == [.cancelTimer, .conceal])
     }
 
-    @Test func pointerLeaveArmsTimerInsteadOfConcealing() {
+    @Test func pointerLeaveAfterHoverArmsQuickTimer() {
         var machine = RehideStateMachine(policy: .init(autoRehide: true, delay: 5))
         _ = machine.handle(.revealRequested([.hidden], .hover), now: now)
         _ = machine.handle(.transitionSettled, now: now)
         _ = machine.handle(.pointerReturned, now: now)
         let effects = machine.handle(.pointerLeft, now: now)
-        #expect(effects == [.armTimer(now.addingTimeInterval(5))])
+        // Hover reveals rehide fast on hover-out; the 5s delay is for
+        // deliberate reveals.
+        #expect(effects == [.armTimer(now.addingTimeInterval(1))])
         #expect(machine.state == .revealed(sections: [.hidden], reason: .hover))
+    }
+
+    @Test func pointerLeaveAfterClickKeepsFullDelay() {
+        var machine = RehideStateMachine(policy: .init(autoRehide: true, delay: 5))
+        _ = machine.handle(.revealRequested([.hidden], .click), now: now)
+        _ = machine.handle(.transitionSettled, now: now)
+        let effects = machine.handle(.pointerLeft, now: now)
+        #expect(effects == [.armTimer(now.addingTimeInterval(5))])
+    }
+
+    @Test func toggleDuringRevealTransitionQueuesConceal() {
+        var machine = RehideStateMachine()
+        _ = machine.handle(.revealRequested([.hidden], .hover), now: now)
+        // Chevron click lands while the hover reveal is still applying.
+        _ = machine.handle(.toggleRequested([.hidden], .statusItem), now: now)
+        let effects = machine.handle(.transitionSettled, now: now)
+        #expect(effects == [.conceal])
+        _ = machine.handle(.transitionSettled, now: now)
+        #expect(machine.state == .concealed)
     }
 
     @Test func redundantRevealRefreshesTimer() {

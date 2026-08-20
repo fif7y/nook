@@ -115,10 +115,20 @@ public struct RehideStateMachine: Equatable, Sendable {
             state = .transitioning(target: .conceal, queued: nil)
             return [.cancelTimer, .conceal]
 
-        // ── Mid-flight: queue, never toggle ──────────────────────────────────
-        case (.transitioning(let target, _), .revealRequested(let sections, let reason)),
-             (.transitioning(let target, _), .toggleRequested(let sections, let reason)):
+        // ── Mid-flight: queue, never interleave ──────────────────────────────
+        case (.transitioning(let target, _), .revealRequested(let sections, let reason)):
             state = .transitioning(target: target, queued: .reveal(sections, reason))
+            return [.none]
+
+        case (.transitioning(let target, _), .toggleRequested(let sections, let reason)):
+            // A toggle means "the opposite of where we're heading" — clicking
+            // the chevron during a hover-triggered reveal must queue a conceal,
+            // not reinforce the reveal (which reads as a dead click).
+            let queued: State.Target = {
+                if case .reveal = target { return .conceal }
+                return .reveal(sections, reason)
+            }()
+            state = .transitioning(target: target, queued: queued)
             return [.none]
 
         case (.transitioning(let target, _), .concealRequested),
@@ -150,8 +160,13 @@ public struct RehideStateMachine: Equatable, Sendable {
         case (.revealed, .pointerReturned):
             return [.cancelTimer]
 
-        case (.revealed, .pointerLeft):
-            return armIfNeeded(now: now)
+        case (.revealed(_, let reason), .pointerLeft):
+            // Hover-out after a hover reveal rehides quickly — the user only
+            // glanced. Deliberate reveals (click, hotkey, chevron) keep the
+            // full configured delay.
+            guard policy.autoRehide else { return [.none] }
+            let interval = reason == .hover ? min(policy.delay, 1.0) : policy.delay
+            return [.armTimer(now.addingTimeInterval(interval))]
 
         default:
             return [.none]
