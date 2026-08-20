@@ -142,18 +142,22 @@ final class ExtrasManager {
                 item.button?.animator().alphaValue = 1
             }
         } else {
-            NSAnimationContext.runAnimationGroup({ ctx in
+            NSAnimationContext.runAnimationGroup { ctx in
                 ctx.duration = 0.18
                 ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
                 item.button?.animator().alphaValue = 0
-            }, completionHandler: { [weak self] in
+            }
+            // Start the gap-close at the fade's midpoint — sequencing them
+            // (fade completes, then close) reads as stop-and-go; overlapped,
+            // they blend into one continuous motion.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.09) { [weak self] in
                 guard let self, self.lastVisible[id] == false else { return }
                 self.items[id]?.length = 0
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
                     guard let self, self.lastVisible[id] == false else { return }
                     self.items[id]?.isVisible = false
                 }
-            })
+            }
         }
     }
 
