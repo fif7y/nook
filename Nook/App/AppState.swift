@@ -160,9 +160,56 @@ final class AppState {
         }
     }
 
+    /// Menubar-positional sections: Nook's own chevron is the visible/hidden
+    /// boundary. Anything the user ⌘-drags to the LEFT of it (larger agent
+    /// position value) is adopted into Hidden; dragging right of it back to
+    /// Visible. Always-Hidden stays settings-managed for now.
+    private func adoptSectionsFromBar() {
+        let positions = AgentPositions.read()
+        let nookPrefix = "status:\(Bundle.main.bundleIdentifier ?? "app.fif7y.Nook")::"
+        // Boundary = Nook's main status item (not separators). Its exact title
+        // varies, so match our bundle and take the item closest to the middle
+        // is overkill — there is exactly one non-separator Nook item.
+        guard
+            settings.showStatusItem,
+            let boundary = positions
+                .filter({ $0.key.hasPrefix(nookPrefix) && !$0.key.contains("Separator") })
+                .map(\.value)
+                .first
+        else { return }
+
+        var model = settings.sectionModel
+        var changed = false
+        for (tag, position) in positions {
+            guard tag.hasPrefix("status:"),
+                  !tag.hasPrefix(nookPrefix),
+                  !tag.hasPrefix("status:com.apple.")
+            else { continue }
+            let id = ItemID(rawValue: tag)
+            let current = model.section(of: id)
+            guard current != .alwaysHidden else { continue }
+            let desired: NookCore.Section = position > boundary ? .hidden : .visible
+            guard desired != current else { continue }
+            if desired == .visible {
+                model.assignments.removeValue(forKey: id)
+            } else {
+                model.assignments[id] = desired
+            }
+            changed = true
+        }
+        if changed {
+            settings.sectionModel = model
+            settings.save()
+            Task { await engine.setModel(model) }
+        }
+    }
+
     private func handle(engineEvent: EngineEvent) {
         switch engineEvent {
-        case .itemsChanged, .externalOrderChange:
+        case .externalOrderChange:
+            adoptSectionsFromBar()
+            Task { snapshot = await engine.snapshot() }
+        case .itemsChanged:
             Task { snapshot = await engine.snapshot() }
         case .assertionTornDown:
             // Recovery = schedule a converge through the normal path.

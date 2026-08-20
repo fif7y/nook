@@ -149,7 +149,9 @@ struct SectionRow: View {
 
     private var items: [ObservedItem] {
         (appState.snapshot?.items ?? []).filter {
-            !$0.id.isSystemModule && appState.settings.sectionModel.section(of: $0.id) == section
+            !$0.id.isSystemModule
+                && $0.id.bundleID != Bundle.main.bundleIdentifier
+                && appState.settings.sectionModel.section(of: $0.id) == section
         }
     }
 
