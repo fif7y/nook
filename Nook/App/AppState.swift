@@ -196,6 +196,9 @@ final class AppState {
         settings.sectionModel = model
         settings.save()
         NookLog.log("editor: move \(id.rawValue) → \(section) before=\(beforeID?.rawValue ?? "end")")
+        // Nook-owned extras change visibility with the model immediately —
+        // placement below needs the item on screen to have a frame at all.
+        extras?.apply(model: model, revealed: currentRevealedSections)
         Task {
             await engine.setModel(model)
             // Physically place the icon in its section's zone via a synthetic
@@ -213,14 +216,23 @@ final class AppState {
     /// ⌘-drag released in the wrong place can fire system gestures.
     private func physicallyPlace(_ id: ItemID, in section: NookCore.Section) async {
         try? await Task.sleep(for: .milliseconds(450))
-        let snap = await engine.snapshot()
+        // Freshly-shown extras take a beat to be hosted — retry the lookup
+        // briefly instead of giving up on the first stale snapshot.
+        var snap = await engine.snapshot()
         snapshot = snap
+        for _ in 0..<3 where !snap.items.contains(where: { $0.id == id && $0.frame != nil }) {
+            try? await Task.sleep(for: .milliseconds(550))
+            snap = await engine.snapshot()
+            snapshot = snap
+        }
         let nookBundle = Bundle.main.bundleIdentifier ?? "app.fif7y.Nook"
         guard
             let item = snap.items.first(where: { $0.id == id }),
             let frame = item.frame,
             let chevron = snap.items.first(where: {
-                $0.id.bundleID == nookBundle && !$0.id.rawValue.contains("Separator")
+                $0.id.bundleID == nookBundle
+                    && !Self.isNookExtraID($0.id)
+                    && !$0.id.rawValue.contains("Separator")
             }),
             let chevronFrame = chevron.frame,
             let screen = NSScreen.screens.first
@@ -492,7 +504,9 @@ final class AppState {
         let nookBundle = Bundle.main.bundleIdentifier ?? "app.fif7y.Nook"
         guard
             let chevron = snap.items.first(where: {
-                $0.id.bundleID == nookBundle && !$0.id.rawValue.contains("Separator")
+                $0.id.bundleID == nookBundle
+                    && !Self.isNookExtraID($0.id)
+                    && !$0.id.rawValue.contains("Separator")
             }),
             let chevronX = chevron.frame?.minX
         else { return }
