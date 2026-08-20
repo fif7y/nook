@@ -174,7 +174,20 @@ final class AppState {
         }
         hotkey?.register(settings.hotkey)
         separators?.sync(with: settings.separators)
+        // Newly toggled-on extras get hosted wherever macOS pleases (left end
+        // of the trailing area) — physically place them into their section
+        // like any editor move would.
+        let previousExtraIDs = Set(extras?.managedItemIDs ?? [])
         extras?.sync(with: settings.extraItems)
+        let newExtraIDs = Set(extras?.managedItemIDs ?? []).subtracting(previousExtraIDs)
+        if !newExtraIDs.isEmpty {
+            Task {
+                try? await Task.sleep(for: .milliseconds(600))
+                for id in newExtraIDs {
+                    await physicallyPlace(id, in: settings.sectionModel.section(of: id))
+                }
+            }
+        }
         Task {
             await engine.setSteadyExtras(settings.hideSystemExtras)
             await engine.setModel(settings.sectionModel)
