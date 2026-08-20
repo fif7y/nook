@@ -28,6 +28,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         window.isReleasedWhenClosed = false
         window.setContentSize(NSSize(width: 560, height: 520))
         window.center()
+        // Floating: settings is used in tandem with menubar interactions that
+        // briefly activate other apps — it must never sink under their windows.
+        window.level = .floating
+        window.collectionBehavior = [.moveToActiveSpace]
         window.delegate = self
         self.window = window
         window.makeKeyAndOrderFront(nil)

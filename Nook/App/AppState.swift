@@ -240,10 +240,17 @@ final class AppState {
             to: CGPoint(x: targetX, y: y)
         )
         snapshot = await engine.snapshot()
-        // The drag clicked outside Nook — hand focus straight back to the
-        // settings window so the edit flow never loses its footing.
+        // The drag clicked outside Nook — hand focus back to the settings
+        // window. Retried: the dragged icon's app can win an activation race
+        // hundreds of ms later and steal focus back from a single attempt.
         if settingsWindowVisible {
             SettingsWindowController.shared.refocus()
+            Task {
+                try? await Task.sleep(for: .milliseconds(300))
+                SettingsWindowController.shared.refocus()
+                try? await Task.sleep(for: .milliseconds(500))
+                SettingsWindowController.shared.refocus()
+            }
         }
     }
 
