@@ -89,9 +89,12 @@ final class ExtrasManager {
         applyCurrent()
     }
 
-    /// Applies section visibility. The camera/mic indicator overrides its
-    /// section while hardware is live — an indicator that hides when active
-    /// would be lying.
+    /// Applies section visibility. Hiding collapses the item's LENGTH instead
+    /// of toggling isVisible — isVisible plays its own slide animation on a
+    /// different clock than the assertion reflow; a width collapse rides the
+    /// same bar reflow and reads as one motion. The camera/mic indicator
+    /// overrides its section while hardware is live — an indicator that hides
+    /// when active would be lying.
     func apply(model: SectionModel, revealed: Set<NookCore.Section>) {
         for (id, item) in items {
             guard let spec = specs[id] else { continue }
@@ -99,15 +102,11 @@ final class ExtrasManager {
             var visible = section == .visible || revealed.contains(section)
             if spec.kind == .cameraMicIndicator {
                 let active = cameraMicMonitor?.isActive ?? false
-                visible = active || visible
+                visible = visible || active
                 updateCameraSymbol(item, monitor: cameraMicMonitor)
-                // Not active and not revealed-section-visible → hidden.
-                if !active, !(section == .visible || revealed.contains(section)) {
-                    visible = false
-                }
-                // When inactive but in Visible section, show dimmed idle state.
             }
-            item.isVisible = visible
+            item.length = visible ? NSStatusItem.squareLength : 0
+            item.button?.alphaValue = visible ? 1 : 0
         }
     }
 
@@ -139,16 +138,24 @@ final class ExtrasManager {
     static func symbol(for spec: ExtraItemSpec) -> String {
         switch spec.kind {
         case .mediaControls: "playpause.fill"
-        case .cameraMicIndicator: "web.camera"
-        case .airdrop: "airplane.circle"  // replaced below if available
+        case .cameraMicIndicator: "video.fill"
+        case .airdrop: Self.airdropSymbol
         case .shortcut: spec.symbol ?? "bolt.fill"
         }
     }
 
+    /// SF Symbols has a real "airdrop" glyph on current systems; fall back to
+    /// the radiating-waves look everywhere else.
+    static let airdropSymbol: String = {
+        NSImage(systemSymbolName: "airdrop", accessibilityDescription: nil) != nil
+            ? "airdrop"
+            : "dot.radiowaves.left.and.right"
+    }()
+
     private func updateCameraSymbol(_ item: NSStatusItem, monitor: CameraMicMonitor?) {
         let camera = monitor?.cameraActive ?? false
         let mic = monitor?.micActive ?? false
-        let symbol = camera ? "video.fill" : (mic ? "mic.fill" : "web.camera")
+        let symbol = camera ? "video.fill" : (mic ? "mic.fill" : "video.fill")
         let image = NSImage(systemSymbolName: symbol, accessibilityDescription: "Camera & Mic")
         if camera || mic {
             image?.isTemplate = false

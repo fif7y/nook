@@ -35,6 +35,23 @@ public actor EngineGoldenGate: MenuBarEngine {
     /// converge→reflow→itemsChanged→converge oscillates forever.
     private var activeAllowlist: Set<String>?
     private var activeConcealable: Set<String>?
+    private var activeSystemAllow: Set<Int>?
+
+    /// Core system items ARE controllable via the assertion's system-item
+    /// allowlist — map their menuextra identifiers to MBSystemItemIdentifier.
+    public static func systemItem(for id: ItemID) -> SystemItem? {
+        let raw = id.rawValue
+        guard raw.contains("::com.apple.menuextra.") else { return nil }
+        if raw.hasSuffix(".sound") { return .volume }
+        if raw.hasSuffix(".battery") { return .battery }
+        if raw.hasSuffix(".wifi") { return .wifi }
+        if raw.hasSuffix(".clock") { return .clock }
+        if raw.hasSuffix(".bluetooth") { return .bluetooth }
+        if raw.hasSuffix(".display") || raw.hasSuffix(".displays") { return .displays }
+        if raw.hasSuffix(".textinput") || raw.hasSuffix(".keyboard") { return .keyboard }
+        if raw.hasSuffix(".screen-mirroring") { return .screenMirroring }
+        return nil
+    }
     private var lastSnapshot: EngineSnapshot?
     private var started = false
 
@@ -171,7 +188,15 @@ public actor EngineGoldenGate: MenuBarEngine {
             return
         }
 
-        if concealable.isEmpty, !steadyExtras {
+        // System items assigned to a non-revealed section leave the system
+        // allowlist — this is how Sound/battery/etc. become hideable.
+        let hiddenSystem = Set(model.assignments.compactMap { id, section -> SystemItem? in
+            guard !revealedSections.contains(section) else { return nil }
+            return Self.systemItem(for: id)
+        })
+        let allowedSystem = SystemItem.allCases.filter { !hiddenSystem.contains($0) }
+
+        if concealable.isEmpty, hiddenSystem.isEmpty, !steadyExtras {
             // Nothing to hide and extras are allowed back: drop the assertion.
             invalidateAssertion()
             _ = await refreshSnapshot()
@@ -204,6 +229,7 @@ public actor EngineGoldenGate: MenuBarEngine {
         // from the active allowlist must.
         if assertion != nil,
            activeConcealable == concealable,
+           activeSystemAllow == Set(allowedSystem.map(\.rawValue)),
            let activeAllowlist, activeAllowlist.isSuperset(of: allowedBundles) {
             NookLog.log("converge: no-op (concealable=\(concealable.count), allow=\(allowedBundles.count))")
             return
@@ -215,7 +241,7 @@ public actor EngineGoldenGate: MenuBarEngine {
         // activation must never wedge the converge path. 3s is generous; the
         // observed completion latency is <100ms.
         let activationBox = ActivationBox()
-        let handle = AssessmentMode.activate(bundleIDs: Array(allowedBundles)) { error in
+        let handle = AssessmentMode.activate(allowing: allowedSystem, bundleIDs: Array(allowedBundles)) { error in
             activationBox.resolve(error == nil)
         }
         var activated = false
@@ -223,6 +249,7 @@ public actor EngineGoldenGate: MenuBarEngine {
             assertion = handle
             activeAllowlist = allowedBundles
             activeConcealable = concealable
+            activeSystemAllow = Set(allowedSystem.map(\.rawValue))
             let deadline = Date().addingTimeInterval(3)
             while Date() < deadline {
                 if let result = activationBox.result {
@@ -243,6 +270,9 @@ public actor EngineGoldenGate: MenuBarEngine {
             NookLog.log("converge: assertion active")
         }
         let concealed = Set(observedIDs.filter { id in
+            if let system = Self.systemItem(for: id) {
+                return hiddenSystem.contains(system)
+            }
             guard let bundle = id.bundleID else { return false }
             return concealable.contains(bundle)
         })
@@ -296,6 +326,7 @@ public actor EngineGoldenGate: MenuBarEngine {
         assertion = nil
         activeAllowlist = nil
         activeConcealable = nil
+        activeSystemAllow = nil
     }
 
     private func refreshSnapshot() async -> EngineSnapshot {

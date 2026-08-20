@@ -344,11 +344,19 @@ final class AppState {
                 byID[id] = ObservedItem(id: id, frame: nil, appName: spec.shortcutName ?? nil)
             }
         }
-        let all = byID.values.filter {
-            !$0.id.isSystemModule
-                && ($0.id.bundleID != Bundle.main.bundleIdentifier || Self.isNookExtraID($0.id))
-                && $0.id.bundleID?.hasPrefix("com.apple.") != true
-                && settings.sectionModel.section(of: $0.id) == section
+        let all = byID.values.filter { item in
+            guard !item.id.isSystemModule,
+                  settings.sectionModel.section(of: item.id) == section
+            else { return false }
+            if item.id.bundleID == Bundle.main.bundleIdentifier {
+                return Self.isNookExtraID(item.id)
+            }
+            if item.id.bundleID?.hasPrefix("com.apple.") == true {
+                // Core system icons the assertion can individually control
+                // (Sound, battery, Wi-Fi…) are manageable; the rest stay out.
+                return EngineGoldenGate.systemItem(for: item.id) != nil
+            }
+            return true
         }
         let explicit = settings.sectionModel.order[section] ?? []
         return all.sorted { lhs, rhs in

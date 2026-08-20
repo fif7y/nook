@@ -149,7 +149,11 @@ private struct ItemTile: View {
     @State private var targeted = false
 
     private var displayName: String {
-        item.appName ?? item.id.bundleID?.components(separatedBy: ".").last ?? "?"
+        if item.id.rawValue.contains("::com.apple.menuextra.") {
+            let suffix = item.id.rawValue.components(separatedBy: ".").last ?? "System"
+            return suffix.replacingOccurrences(of: "-", with: " ").capitalized
+        }
+        return item.appName ?? item.id.bundleID?.components(separatedBy: ".").last ?? "?"
     }
 
     /// Same-bundle siblings hide together (assertion granularity is per
@@ -293,7 +297,7 @@ private struct NookItemsStrip: View {
                     isOn: hasKind(.cameraMicIndicator)
                 ) { toggleKind(.cameraMicIndicator, on: $0) }
                 NookItemRow(
-                    symbol: "wifi", title: "AirDrop",
+                    symbol: ExtrasManager.airdropSymbol, title: "AirDrop",
                     caption: "Opens Finder's AirDrop view",
                     isOn: hasKind(.airdrop)
                 ) { toggleKind(.airdrop, on: $0) }
