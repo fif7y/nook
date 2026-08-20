@@ -330,6 +330,33 @@ final class AppState {
         editorItems(in: section).map(\.id)
     }
 
+    /// One-shot physical tidy: reveal everything, then walk the sections
+    /// left→right and drag every out-of-place icon into its slot so the bar's
+    /// physical order matches the sections ([always-hidden][hidden][visible]).
+    /// Contiguity is what makes hide/reveal animations uniform — an icon that
+    /// toggles mid-bar displaces its neighbors and reads as sliding.
+    private(set) var tidying = false
+
+    func tidyBar() {
+        guard !tidying else { return }
+        tidying = true
+        NookLog.log("tidy: starting")
+        reveal([.hidden, .alwaysHidden], reason: .settingsPreview)
+        Task {
+            try? await Task.sleep(for: .seconds(1.2))
+            for section in [NookCore.Section.alwaysHidden, .hidden, .visible] {
+                for item in editorItems(in: section) {
+                    await physicallyPlace(item.id, in: section)
+                }
+            }
+            NookLog.log("tidy: done")
+            tidying = false
+            if !settingsWindowVisible {
+                concealNow()
+            }
+        }
+    }
+
     /// Items the layout editor shows for a section: third-party only (Apple
     /// items are out of scope), Nook's own items excluded, and CONCEALED items
     /// included — they drop out of AX observation but absolutely belong in the

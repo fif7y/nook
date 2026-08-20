@@ -23,6 +23,21 @@ struct MenuBarTab: View {
                     .foregroundStyle(.orange)
                 }
 
+                HStack {
+                    Spacer()
+                    Button {
+                        appState.tidyBar()
+                    } label: {
+                        Label(
+                            appState.tidying ? "Tidying…" : "Tidy bar order",
+                            systemImage: "wand.and.stars"
+                        )
+                        .font(.callout)
+                    }
+                    .disabled(appState.tidying)
+                    .help("Physically arranges the bar to match the sections — icons that sit out of place slide their neighbors on every reveal.")
+                }
+
                 EditorSectionView(
                     section: .visible,
                     title: "Visible",
