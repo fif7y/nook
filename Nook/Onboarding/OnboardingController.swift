@@ -71,10 +71,7 @@ struct OnboardingView: View {
                         .font(.callout)
                         .foregroundStyle(.secondary)
                     Button("Grant Accessibility Access") {
-                        let url = URL(
-                            string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
-                        )!
-                        NSWorkspace.shared.open(url)
+                        requestAccessibility()
                     }
                     .controlSize(.large)
                 }
@@ -89,6 +86,26 @@ struct OnboardingView: View {
         }
         .onDisappear {
             pollTimer?.invalidate()
+        }
+    }
+
+    /// First click: the native AX prompt (its own "Open System Settings"
+    /// button is the reliable path). The prompt only shows once per app, so
+    /// subsequent clicks deep-link to the Accessibility pane directly.
+    private func requestAccessibility() {
+        NSApp.activate()
+        // Literal instead of kAXTrustedCheckOptionPrompt: the global CFString
+        // var isn't concurrency-safe to touch under strict isolation.
+        let promptKey = "AXTrustedCheckOptionPrompt"
+        let alreadyPrompted = UserDefaults.standard.bool(forKey: "nook.axPromptShown")
+        if !alreadyPrompted {
+            UserDefaults.standard.set(true, forKey: "nook.axPromptShown")
+            AXIsProcessTrustedWithOptions([promptKey: true] as CFDictionary)
+        } else {
+            let url = URL(
+                string: "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility"
+            )!
+            NSWorkspace.shared.open(url)
         }
     }
 }

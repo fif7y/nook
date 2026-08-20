@@ -9,10 +9,9 @@ struct NookApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        Settings {
-            SettingsView()
-                .environment(appDelegate.appState)
-        }
+        // Placeholder scene: the App protocol needs one, but Nook presents its
+        // real windows (settings, onboarding) through its own controllers.
+        Settings { EmptyView() }
     }
 }
 

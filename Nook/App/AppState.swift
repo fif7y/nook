@@ -103,9 +103,7 @@ final class AppState {
     }
 
     func openSettings() {
-        NSApp.activate()
-        // SwiftUI Settings scene: standard selector opens/foregrounds it.
-        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+        SettingsWindowController.shared.show(appState: self)
     }
 
     func refreshAccessibility() {
