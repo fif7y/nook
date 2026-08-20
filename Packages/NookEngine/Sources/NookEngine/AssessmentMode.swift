@@ -52,8 +52,19 @@ public enum AssessmentMode {
         bundleIDs: [String],
         completion: @escaping @Sendable (Error?) -> Void
     ) -> AssessmentAssertion? {
+        activate(rawSystemItems: systemItems.map(\.rawValue), bundleIDs: bundleIDs, completion: completion)
+    }
+
+    /// Probe-only variant: raw MBSystemItemIdentifier values, including ones
+    /// beyond the 9 documented cases — used to test whether the enum extends
+    /// to the collateral extras (Now Playing etc.).
+    public static func activate(
+        rawSystemItems: [Int],
+        bundleIDs: [String],
+        completion: @escaping @Sendable (Error?) -> Void
+    ) -> AssessmentAssertion? {
         let config = nook_makeConfiguration(
-            systemItems.map { NSNumber(value: $0.rawValue) },
+            rawSystemItems.map { NSNumber(value: $0) },
             bundleIDs
         )
         guard let config else { return nil }

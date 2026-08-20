@@ -103,6 +103,30 @@ case "ax":
     }
     describe(app, depth: 0)
 
+case "conceal-sys":
+    // conceal-sys <seconds> <maxSysID> [allowedBundleID…] — extended system-ID
+    // probe: do IDs above 8 keep Now Playing / camera extras visible?
+    guard args.count >= 3, let seconds = TimeInterval(args[1]), let maxID = Int(args[2]) else {
+        fail("usage: nook-probe conceal-sys <seconds> <maxSysID> [allowedBundleID…]")
+    }
+    let allowed = Array(args.dropFirst(3))
+    print("Assertion with system IDs 0…\(maxID), bundles: \(allowed.joined(separator: ", "))")
+    let done = DispatchSemaphore(value: 0)
+    let assertion = AssessmentMode.activate(
+        rawSystemItems: Array(0...maxID),
+        bundleIDs: allowed
+    ) { error in
+        print("completion: \(error.map { "ERROR \($0)" } ?? "OK")")
+        done.signal()
+    }
+    guard let assertion else { fail("activation not attempted") }
+    _ = done.wait(timeout: .now() + 5)
+    print("holding \(seconds)s…")
+    RunLoop.main.run(until: Date(timeIntervalSinceNow: seconds))
+    assertion.invalidate()
+    print("invalidated")
+    RunLoop.main.run(until: Date(timeIntervalSinceNow: 1))
+
 case "engine-test":
     guard args.count >= 2 else {
         fail("usage: nook-probe engine-test <bundleIDToHide> [soakCycles]")
