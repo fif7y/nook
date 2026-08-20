@@ -31,8 +31,8 @@ actor ItemEnumerator {
         guard let windows = copyAttribute(agent, kAXChildrenAttribute) as? [AXUIElement] else {
             return []
         }
-        var items: [RawItem] = []
-        var seen = Set<ItemID>()
+        var byID: [ItemID: RawItem] = [:]
+        var order: [ItemID] = []
         for window in windows {
             guard role(of: window) == "AXWindow" else { continue }
             guard let groups = copyAttribute(window, kAXChildrenAttribute) as? [AXUIElement] else {
@@ -40,14 +40,25 @@ actor ItemEnumerator {
             }
             for group in groups {
                 guard let item = describeGroup(group) else { continue }
-                // The same item appears once per display; keep the first
-                // (main-display) occurrence.
-                if seen.insert(item.id).inserted {
-                    items.append(item)
+                if let existing = byID[item.id] {
+                    // The same item appears once per display. Prefer the
+                    // main-display occurrence (y ≈ 0 in CG top-left coords) so
+                    // every frame lives in one coordinate space — boundary
+                    // comparisons break across mixed display spaces.
+                    if !isMainDisplayFrame(existing.frame), isMainDisplayFrame(item.frame) {
+                        byID[item.id] = item
+                    }
+                } else {
+                    byID[item.id] = item
+                    order.append(item.id)
                 }
             }
         }
-        return items
+        return order.compactMap { byID[$0] }
+    }
+
+    private func isMainDisplayFrame(_ frame: CGRect) -> Bool {
+        frame.minY > -5 && frame.minY < 50
     }
 
     /// True when MenuBarAgent shows its native overflow chevron («).
@@ -119,6 +130,25 @@ actor ItemEnumerator {
                         appName: nil
                     )
                 }
+            case "AXButton":
+                // Plain NSStatusItem buttons (Nook's own chevron/separators,
+                // Thaw's dividers) sit in the tree as bare AXButtons — no
+                // nested AXApplication. Attribute by the button's owning pid.
+                var pid: pid_t = 0
+                AXUIElementGetPid(child, &pid)
+                guard
+                    pid > 0,
+                    let app = NSRunningApplication(processIdentifier: pid),
+                    let bundleID = app.bundleIdentifier
+                else { continue }
+                let title = (copyAttribute(child, kAXTitleAttribute) as? String).flatMap {
+                    $0.isEmpty ? nil : $0
+                } ?? (copyAttribute(child, kAXIdentifierAttribute) as? String ?? "Item-0")
+                return RawItem(
+                    id: ItemID(rawValue: "status:\(bundleID)::\(title)"),
+                    frame: frame,
+                    appName: app.localizedName
+                )
             default:
                 continue
             }

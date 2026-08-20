@@ -36,6 +36,7 @@ final class AppState {
 
         rehide.policy = settings.rehidePolicy
         engineCanHide = engine.capabilities.canHide
+        NookLog.log("start: axTrusted=\(AXIsProcessTrusted()) canHide=\(engineCanHide) assignments=\(settings.sectionModel.assignments.count)")
 
         if !accessibilityGranted || !settings.onboardingCompleted {
             OnboardingController.shared.present(appState: self)
@@ -203,10 +204,23 @@ final class AppState {
     /// Hidden; right of it back to Visible. Uses live AX frames — NOT the
     /// agent's positions plist, which lists new items only lazily (M1 finding).
     /// Always-Hidden stays settings-managed for now.
-    func adoptSectionsFromBar() {
+    func adoptSectionsFromBar(retry: Int = 0) {
         Task {
+            // Mid-transition/settling bars give false frames — defer, don't
+            // drop (hover cycles reset the settle clock constantly; a plain
+            // skip starves adoption and ⌘-drags never land).
+            if isTransitioning || Date().timeIntervalSince(lastSettleAt) <= 1.5 {
+                guard retry < 5 else {
+                    NookLog.log("adopt: gave up after \(retry) deferrals")
+                    return
+                }
+                try? await Task.sleep(for: .seconds(1))
+                adoptSectionsFromBar(retry: retry + 1)
+                return
+            }
             let snap = await engine.snapshot()
             snapshot = snap
+            NookLog.log("adopt: pass (retry=\(retry), items=\(snap.items.count))")
             adopt(from: snap)
         }
     }
@@ -228,13 +242,9 @@ final class AppState {
 
     private func adopt(from snap: EngineSnapshot) {
         guard settings.showStatusItem else { return }
-        // Never adopt from a bar that's mid-transition or still reflowing —
-        // during the oscillation bug this path watched items whipsaw across
-        // the chevron and wiped every hidden assignment.
-        guard !isTransitioning, Date().timeIntervalSince(lastSettleAt) > 1.5 else {
-            NookLog.log("adopt: skipped (transitioning or settling)")
-            return
-        }
+        // adoptSectionsFromBar defers while transitioning/settling; this is
+        // the last line of defense if called on a stale path.
+        guard !isTransitioning else { return }
         let nookBundle = Bundle.main.bundleIdentifier ?? "app.fif7y.Nook"
         guard
             let chevron = snap.items.first(where: {
@@ -244,6 +254,7 @@ final class AppState {
         else { return }
 
         let isFirstPass = lastAdoptionSides.isEmpty
+        NookLog.log("adopt: chevronX=\(chevronX) firstPass=\(isFirstPass) trackedSides=\(lastAdoptionSides.count)")
         var model = settings.sectionModel
         var changed = false
         for item in snap.items {
@@ -266,6 +277,7 @@ final class AppState {
             } else {
                 model.assignments[item.id] = desired
             }
+            NookLog.log("adopt: \(item.id.rawValue) → \(desired)")
             changed = true
         }
         if changed {
