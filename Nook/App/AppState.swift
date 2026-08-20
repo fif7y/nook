@@ -240,6 +240,11 @@ final class AppState {
             to: CGPoint(x: targetX, y: y)
         )
         snapshot = await engine.snapshot()
+        // The drag clicked outside Nook — hand focus straight back to the
+        // settings window so the edit flow never loses its footing.
+        if settingsWindowVisible {
+            SettingsWindowController.shared.refocus()
+        }
     }
 
     /// The on-screen left-to-right order of a section right now (fallback when

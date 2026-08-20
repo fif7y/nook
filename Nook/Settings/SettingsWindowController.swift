@@ -38,4 +38,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     func windowWillClose(_ notification: Notification) {
         appState?.settingsWindowVisible = false
     }
+
+    /// Re-front the window after a synthetic menubar drag — the drag's
+    /// mouse-down lands outside Nook, so macOS deactivates us mid-edit.
+    func refocus() {
+        guard let window, window.isVisible else { return }
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate()
+    }
 }
