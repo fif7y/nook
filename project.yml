@@ -1,0 +1,37 @@
+name: Nook
+options:
+  bundleIdPrefix: app.fif7y
+  deploymentTarget:
+    macOS: "27.0"
+  createIntermediateGroups: true
+packages:
+  NookCore:
+    path: Packages/NookCore
+  NookEngine:
+    path: Packages/NookEngine
+targets:
+  Nook:
+    type: application
+    platform: macOS
+    sources:
+      - Nook
+    dependencies:
+      - package: NookCore
+      - package: NookEngine
+        product: NookEngine
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: app.fif7y.Nook
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        SWIFT_VERSION: "6.0"
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        SWIFT_APPROACHABLE_CONCURRENCY: "YES"
+        ENABLE_HARDENED_RUNTIME: "YES"
+        ENABLE_APP_SANDBOX: "NO"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: YW9UY68SQ7
+        GENERATE_INFOPLIST_FILE: "YES"
+        INFOPLIST_KEY_LSUIElement: "YES"
+        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 Gabriel Faucon"
+        INFOPLIST_KEY_NSPrincipalClass: NSApplication
