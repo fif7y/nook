@@ -127,6 +127,20 @@ case "conceal-sys":
     print("invalidated")
     RunLoop.main.run(until: Date(timeIntervalSinceNow: 1))
 
+case "enum":
+    // Print exactly what the engine's enumerator produces: IDs + frames.
+    let done = DispatchSemaphore(value: 0)
+    Task {
+        let enumerator = ItemEnumerator()
+        for item in await enumerator.snapshotItems() {
+            print(String(format: "%8.1f  %@", item.frame.minX, item.id.rawValue))
+        }
+        done.signal()
+    }
+    while done.wait(timeout: .now()) == .timedOut {
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.05))
+    }
+
 case "engine-test":
     guard args.count >= 2 else {
         fail("usage: nook-probe engine-test <bundleIDToHide> [soakCycles]")

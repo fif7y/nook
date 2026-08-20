@@ -28,6 +28,7 @@ final class SeparatorManager {
                     withLength: spec.style == .space ? 14 : NSStatusItem.variableLength
                 )
                 item.autosaveName = "Nook.Separator.\(spec.id.uuidString)"
+                item.button?.setAccessibilityTitle("Nook.Separator.\(spec.id.uuidString)")
                 configure(item.button, style: spec.style)
                 items[spec.id] = item
             }

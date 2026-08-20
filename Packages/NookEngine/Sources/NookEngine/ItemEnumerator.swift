@@ -9,15 +9,16 @@ import ApplicationServices
 import Foundation
 import NookCore
 
-struct RawItem: Equatable, Sendable {
-    let id: ItemID
-    let frame: CGRect
-    let appName: String?
+public struct RawItem: Equatable, Sendable {
+    public let id: ItemID
+    public let frame: CGRect
+    public let appName: String?
 }
 
 /// Runs off the main actor: AX calls into busy apps can block, so snapshots are
 /// taken on a background executor with short messaging timeouts.
-actor ItemEnumerator {
+public actor ItemEnumerator {
+    public init() {}
     static let agentBundleID = "com.apple.MenuBarAgent"
 
     private var agentElement: AXUIElement?
@@ -26,7 +27,7 @@ actor ItemEnumerator {
     /// Correlates each observed item group to a stable agent tag. Tags come
     /// from the positions plist domain (`status:<bundle>::<title>`); we build
     /// the same shape from the AX tree so both sources agree.
-    func snapshotItems() -> [RawItem] {
+    public func snapshotItems() -> [RawItem] {
         guard let agent = resolveAgent() else { return [] }
         guard let windows = copyAttribute(agent, kAXChildrenAttribute) as? [AXUIElement] else {
             return []
@@ -141,9 +142,12 @@ actor ItemEnumerator {
                     let app = NSRunningApplication(processIdentifier: pid),
                     let bundleID = app.bundleIdentifier
                 else { continue }
-                let title = (copyAttribute(child, kAXTitleAttribute) as? String).flatMap {
-                    $0.isEmpty ? nil : $0
-                } ?? (copyAttribute(child, kAXIdentifierAttribute) as? String ?? "Item-0")
+                let candidates = [
+                    copyAttribute(child, kAXTitleAttribute) as? String,
+                    copyAttribute(child, kAXIdentifierAttribute) as? String,
+                    copyAttribute(child, kAXDescriptionAttribute) as? String,
+                ]
+                let title = candidates.compactMap { $0?.isEmpty == false ? $0 : nil }.first ?? "Item-0"
                 return RawItem(
                     id: ItemID(rawValue: "status:\(bundleID)::\(title)"),
                     frame: frame,

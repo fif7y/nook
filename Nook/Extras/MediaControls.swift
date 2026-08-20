@@ -129,6 +129,9 @@ final class ExtrasManager {
             button.target = self
             button.action = #selector(clicked(_:))
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            // Explicit AX title = the engine's item identity. Without it the
+            // enumerator falls back to "Item-0" and every Nook item collides.
+            button.setAccessibilityTitle(spec.itemTitle)
         }
         return item
     }

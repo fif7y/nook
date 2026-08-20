@@ -23,6 +23,8 @@ final class NookStatusItem {
             button.target = self
             button.action = #selector(clicked)
             button.sendAction(on: [.leftMouseUp, .rightMouseUp])
+            // Stable engine identity (chevron-boundary lookups key off this).
+            button.setAccessibilityTitle("Nook.StatusItem")
         }
     }
 
