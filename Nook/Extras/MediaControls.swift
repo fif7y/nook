@@ -129,30 +129,38 @@ final class ExtrasManager {
         guard lastVisible[id] != visible else { return }
         lastVisible[id] = visible
         if visible {
-            // Re-enter layout at zero width, then expand a tick later — the
-            // width change rides the bar reflow instead of playing the
-            // isVisible slide-in on its own clock.
-            let wasDetached = item.isVisible == false
+            // Attach at zero width, open the gap, THEN fade the glyph in —
+            // width first so the icon never travels with a shrinking frame.
             item.isVisible = true
-            if wasDetached {
-                item.length = 0
-                item.button?.alphaValue = 0
-                DispatchQueue.main.async { [weak self] in
-                    guard let self, self.lastVisible[id] == true else { return }
-                    item.length = NSStatusItem.squareLength
-                    item.button?.alphaValue = 1
-                }
-            } else {
-                item.length = NSStatusItem.squareLength
-                item.button?.alphaValue = 1
-            }
-        } else {
             item.length = 0
             item.button?.alphaValue = 0
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                guard let self, self.lastVisible[id] == false else { return }
-                self.items[id]?.isVisible = false
+            DispatchQueue.main.async { [weak self] in
+                guard let self, self.lastVisible[id] == true else { return }
+                item.length = NSStatusItem.squareLength
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
+                    guard let self, self.lastVisible[id] == true else { return }
+                    NSAnimationContext.runAnimationGroup { ctx in
+                        ctx.duration = 0.18
+                        ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
+                        item.button?.animator().alphaValue = 1
+                    }
+                }
             }
+        } else {
+            // Fade the glyph in place first (like the assertion's items), then
+            // close the gap, then leave layout so no spacing residue remains.
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.12
+                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
+                item.button?.animator().alphaValue = 0
+            }, completionHandler: { [weak self] in
+                guard let self, self.lastVisible[id] == false else { return }
+                item.length = 0
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
+                    guard let self, self.lastVisible[id] == false else { return }
+                    self.items[id]?.isVisible = false
+                }
+            })
         }
     }
 

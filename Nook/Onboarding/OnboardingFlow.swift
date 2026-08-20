@@ -356,15 +356,18 @@ private struct DemoBar: View {
         HStack(spacing: 10) {
             Spacer(minLength: 0)
 
-            // Hideable group — tucks behind the chevron.
-            HStack(spacing: 10) {
+            // Hideable group — tucks INTO the chevron: right-anchored frames
+            // so each icon slides toward the boundary as its slot closes,
+            // nearest-to-the-chevron first. (Center-collapse reads wrong —
+            // the real bar's right side never moves.)
+            HStack(spacing: hidden ? 0 : 10) {
                 ForEach(Array(hideableSymbols.enumerated()), id: \.offset) { index, symbol in
                     slot(symbol)
                         .opacity(hidden ? 0 : 1)
-                        .scaleEffect(hidden ? 0.4 : 1)
-                        .frame(width: hidden ? 0 : 28)
+                        .scaleEffect(hidden ? 0.5 : 1, anchor: .trailing)
+                        .frame(width: hidden ? 0 : 28, alignment: .trailing)
                         .animation(
-                            springSnappy.delay(Double(index) * 0.06),
+                            springSnappy.delay(Double(hideableSymbols.count - 1 - index) * 0.05),
                             value: hidden
                         )
                 }
@@ -418,10 +421,9 @@ private struct DemoBar: View {
             Text("14:50")
                 .font(.system(size: 12, weight: .medium).monospacedDigit())
                 .foregroundStyle(Ink.text.opacity(0.8))
-
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, 16)
+        .padding(.leading, 16)
+        .padding(.trailing, 22)
         .frame(maxWidth: .infinity)
         .frame(height: 44)
         .background(
