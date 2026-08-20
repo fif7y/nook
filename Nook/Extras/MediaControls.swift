@@ -46,6 +46,7 @@ final class ExtrasManager {
     private weak var appState: AppState?
     private var items: [UUID: NSStatusItem] = [:]
     private var specs: [UUID: ExtraItemSpec] = [:]
+    private var lastVisible: [UUID: Bool] = [:]
     private var cameraMicMonitor: CameraMicMonitor?
 
     init(appState: AppState) {
@@ -116,8 +117,42 @@ final class ExtrasManager {
                 }
                 updateCameraSymbol(item, monitor: cameraMicMonitor)
             }
-            item.length = visible ? NSStatusItem.squareLength : 0
-            item.button?.alphaValue = visible ? 1 : 0
+            setVisible(visible, for: id, item: item)
+        }
+    }
+
+    /// Two-phase hide: width-collapse rides the same bar reflow as the
+    /// assertion (matched animation), then after the reflow settles the item
+    /// leaves layout entirely — zero-length items still reserve their built-in
+    /// spacing, which reads as a dead gap next to the chevron.
+    private func setVisible(_ visible: Bool, for id: UUID, item: NSStatusItem) {
+        guard lastVisible[id] != visible else { return }
+        lastVisible[id] = visible
+        if visible {
+            // Re-enter layout at zero width, then expand a tick later — the
+            // width change rides the bar reflow instead of playing the
+            // isVisible slide-in on its own clock.
+            let wasDetached = item.isVisible == false
+            item.isVisible = true
+            if wasDetached {
+                item.length = 0
+                item.button?.alphaValue = 0
+                DispatchQueue.main.async { [weak self] in
+                    guard let self, self.lastVisible[id] == true else { return }
+                    item.length = NSStatusItem.squareLength
+                    item.button?.alphaValue = 1
+                }
+            } else {
+                item.length = NSStatusItem.squareLength
+                item.button?.alphaValue = 1
+            }
+        } else {
+            item.length = 0
+            item.button?.alphaValue = 0
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                guard let self, self.lastVisible[id] == false else { return }
+                self.items[id]?.isVisible = false
+            }
         }
     }
 
