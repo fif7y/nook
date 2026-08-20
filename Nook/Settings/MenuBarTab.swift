@@ -24,6 +24,20 @@ struct MenuBarTab: View {
                 }
 
                 HStack {
+                    Picker("", selection: Binding(
+                        get: { appState.settings.editorIconStyle },
+                        set: { style in
+                            appState.settings.editorIconStyle = style
+                            appState.settingsChanged()
+                        }
+                    )) {
+                        Text("App icons").tag(EditorIconStyle.appIcons)
+                        Text("Menu bar icons").tag(EditorIconStyle.barIcons)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .fixedSize()
+                    .help("Menu bar icons show the actual glyphs from your bar — requires Screen Recording access, captured only while items are revealed.")
                     Spacer()
                     Button {
                         appState.tidyBar()

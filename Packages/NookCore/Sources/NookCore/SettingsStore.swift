@@ -106,6 +106,13 @@ public struct ExtraItemSpec: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+public enum EditorIconStyle: String, Codable, CaseIterable, Sendable {
+    /// Owning app's icon — no permissions needed.
+    case appIcons
+    /// The actual menubar glyphs, captured live — needs Screen Recording.
+    case barIcons
+}
+
 public struct SettingsStore: Codable, Equatable, Sendable {
     public var onboardingCompleted: Bool = false
     public var launchAtLogin: Bool = false
@@ -129,6 +136,8 @@ public struct SettingsStore: Codable, Equatable, Sendable {
     /// Nook-owned proxy items ("Nook items"): section-manageable replacements
     /// for the collateral-hidden system extras, plus user shortcut buttons.
     public var extraItems: [ExtraItemSpec] = []
+
+    public var editorIconStyle: EditorIconStyle = .appIcons
 
     public var sectionModel = SectionModel()
     public var separators: [SeparatorSpec] = []
@@ -156,7 +165,7 @@ public struct SettingsStore: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case onboardingCompleted, launchAtLogin, showStatusItem, hotkey
         case revealTriggers, autoRehide, rehideDelay, rehideOnClickElsewhere
-        case hideSystemExtras, showMediaControls, extraItems, sectionModel, separators
+        case hideSystemExtras, showMediaControls, extraItems, editorIconStyle, sectionModel, separators
         case displayTemplate, displayOverrides
     }
 
@@ -174,6 +183,7 @@ public struct SettingsStore: Codable, Equatable, Sendable {
         hideSystemExtras = try c.decodeIfPresent(Bool.self, forKey: .hideSystemExtras) ?? defaults.hideSystemExtras
         showMediaControls = try c.decodeIfPresent(Bool.self, forKey: .showMediaControls) ?? defaults.showMediaControls
         extraItems = try c.decodeIfPresent([ExtraItemSpec].self, forKey: .extraItems) ?? defaults.extraItems
+        editorIconStyle = try c.decodeIfPresent(EditorIconStyle.self, forKey: .editorIconStyle) ?? defaults.editorIconStyle
         sectionModel = try c.decodeIfPresent(SectionModel.self, forKey: .sectionModel) ?? defaults.sectionModel
         separators = try c.decodeIfPresent([SeparatorSpec].self, forKey: .separators) ?? defaults.separators
         displayTemplate = try c.decodeIfPresent(DisplayBehavior.self, forKey: .displayTemplate) ?? defaults.displayTemplate

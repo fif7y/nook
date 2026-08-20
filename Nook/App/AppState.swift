@@ -50,6 +50,7 @@ final class AppState {
 
         rehide.policy = settings.rehidePolicy
         engineCanHide = engine.capabilities.canHide
+        ItemImageCache.preferBarIcons = settings.editorIconStyle == .barIcons
         NookLog.log("start: axTrusted=\(AXIsProcessTrusted()) canHide=\(engineCanHide) assignments=\(settings.sectionModel.assignments.count)")
 
         if !accessibilityGranted || !settings.onboardingCompleted {
@@ -173,6 +174,11 @@ final class AppState {
             statusItem = nil
         }
         hotkey?.register(settings.hotkey)
+        ItemImageCache.preferBarIcons = settings.editorIconStyle == .barIcons
+        if settings.editorIconStyle == .barIcons, !CGPreflightScreenCaptureAccess() {
+            // System prompt (once); the style degrades to app icons until granted.
+            CGRequestScreenCaptureAccess()
+        }
         separators?.sync(with: settings.separators)
         // Newly toggled-on extras get hosted wherever macOS pleases (left end
         // of the trailing area) — physically place them into their section
@@ -367,10 +373,15 @@ final class AppState {
         reveal([.hidden, .alwaysHidden], reason: .settingsPreview)
         Task {
             try? await Task.sleep(for: .seconds(1.2))
-            for section in [NookCore.Section.alwaysHidden, .hidden, .visible] {
-                for item in editorItems(in: section) {
-                    await physicallyPlace(item.id, in: section)
+            // Two passes: the second verifies — correctly placed items no-op
+            // inside the 10pt tolerance, only genuine misses re-drag.
+            for pass in 1...2 {
+                for section in [NookCore.Section.alwaysHidden, .hidden, .visible] {
+                    for item in editorItems(in: section) {
+                        await physicallyPlace(item.id, in: section)
+                    }
                 }
+                NookLog.log("tidy: pass \(pass) complete")
             }
             NookLog.log("tidy: done")
             tidying = false
@@ -493,6 +504,11 @@ final class AppState {
                     snapshot = await engine.snapshot()
                     NookLog.log("effect reveal settled")
                     lastSettleAt = Date()
+                    // Reveals are the only window where hidden items are
+                    // capturable — refresh the bar-glyph cache opportunistically.
+                    if let items = snapshot?.items {
+                        Task { await ItemImageCache.prewarmBarCaptures(items: items) }
+                    }
                     dispatch(rehide.handle(.transitionSettled))
                 }
             case .conceal:
