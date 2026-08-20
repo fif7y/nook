@@ -186,12 +186,60 @@ final class AppState {
         settings.sectionModel = model
         settings.save()
         NookLog.log("editor: move \(id.rawValue) → \(section) before=\(beforeID?.rawValue ?? "end")")
-        Task { await engine.setModel(model) }
-        // Deliberately NO physical order apply here: that requires restarting
-        // MenuBarAgent, which rebuilds the entire menubar — reads as "the app
-        // quit and relaunched". Hiding is assertion-based and needs no
-        // position change; exact positions stay the domain of native ⌘-drag,
-        // which macOS applies without any restart.
+        Task {
+            await engine.setModel(model)
+            // Physically place the icon in its section's zone via a synthetic
+            // ⌘-drag — the same native path a human drag takes, so the agent
+            // animates and persists it with NO restart. Sections stack
+            // left→right as [always-hidden][hidden][chevron][visible].
+            await physicallyPlace(id, in: section)
+        }
+    }
+
+    /// Target zones are computed from live AX frames: always-hidden lands left
+    /// of every managed item, hidden lands just left of the chevron, visible
+    /// just right of it.
+    private func physicallyPlace(_ id: ItemID, in section: NookCore.Section) async {
+        let snap = await engine.snapshot()
+        snapshot = snap
+        let nookBundle = Bundle.main.bundleIdentifier ?? "app.fif7y.Nook"
+        guard
+            let item = snap.items.first(where: { $0.id == id }),
+            let frame = item.frame,
+            let chevron = snap.items.first(where: {
+                $0.id.bundleID == nookBundle && !$0.id.rawValue.contains("Separator")
+            }),
+            let chevronFrame = chevron.frame
+        else {
+            NookLog.log("place: no frame for \(id.rawValue) — skipping physical move (concealed?)")
+            return
+        }
+        let managedMinX = snap.items
+            .filter { $0.id.bundleID?.hasPrefix("com.apple.") != true && !$0.id.isSystemModule }
+            .compactMap(\.frame?.minX)
+            .min() ?? chevronFrame.minX
+        let targetX: CGFloat
+        switch section {
+        case .alwaysHidden: targetX = managedMinX - 20
+        case .hidden: targetX = chevronFrame.minX - 15
+        case .visible: targetX = chevronFrame.maxX + 25
+        }
+        let y = frame.midY
+        // Already in the right zone? Don't twitch the bar.
+        let alreadyPlaced: Bool
+        switch section {
+        case .alwaysHidden:
+            alreadyPlaced = frame.minX <= managedMinX + 2 && frame.maxX < chevronFrame.minX
+        case .hidden: alreadyPlaced = frame.maxX < chevronFrame.minX
+        case .visible: alreadyPlaced = frame.minX > chevronFrame.maxX
+        }
+        guard !alreadyPlaced else { return }
+        NookLog.log("place: dragging \(id.rawValue) from x=\(frame.midX) to x=\(targetX)")
+        await ItemMover.cmdDrag(
+            from: CGPoint(x: frame.midX, y: y),
+            to: CGPoint(x: targetX, y: y)
+        )
+        snapshot = await engine.snapshot()
     }
 
     /// The on-screen left-to-right order of a section right now (fallback when
