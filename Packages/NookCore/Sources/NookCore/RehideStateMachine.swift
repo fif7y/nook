@@ -56,6 +56,9 @@ public enum RehideEvent: Equatable, Sendable {
     case transitionSettled
     /// The pointer re-entered the menubar band (pauses pending rehide).
     case pointerReturned
+    /// The pointer left the band: (re)arm the rehide countdown — never an
+    /// immediate conceal, the user may be heading to a popover.
+    case pointerLeft
 }
 
 public struct RehideStateMachine: Equatable, Sendable {
@@ -146,6 +149,9 @@ public struct RehideStateMachine: Equatable, Sendable {
         // ── Pointer pause/resume ─────────────────────────────────────────────
         case (.revealed, .pointerReturned):
             return [.cancelTimer]
+
+        case (.revealed, .pointerLeft):
+            return armIfNeeded(now: now)
 
         default:
             return [.none]

@@ -69,6 +69,16 @@ import Testing
         #expect(effects == [.cancelTimer, .conceal])
     }
 
+    @Test func pointerLeaveArmsTimerInsteadOfConcealing() {
+        var machine = RehideStateMachine(policy: .init(autoRehide: true, delay: 5))
+        _ = machine.handle(.revealRequested([.hidden], .hover), now: now)
+        _ = machine.handle(.transitionSettled, now: now)
+        _ = machine.handle(.pointerReturned, now: now)
+        let effects = machine.handle(.pointerLeft, now: now)
+        #expect(effects == [.armTimer(now.addingTimeInterval(5))])
+        #expect(machine.state == .revealed(sections: [.hidden], reason: .hover))
+    }
+
     @Test func redundantRevealRefreshesTimer() {
         var machine = RehideStateMachine(policy: .init(autoRehide: true, delay: 5))
         _ = machine.handle(.revealRequested([.hidden], .hover), now: now)

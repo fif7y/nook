@@ -80,10 +80,42 @@ final class MenuBarBandMonitor {
         } else if !inBand, pointerInBand {
             pointerInBand = false
             hoverTimer?.invalidate()
-            if appState.isRevealed {
-                appState.rehideTriggered(.pointerLeftBand)
+            // Leaving the band arms the countdown (never an instant conceal),
+            // and is the moment a finished ⌘-drag gets adopted into sections.
+            appState.pointerLeftBand()
+            appState.adoptSectionsFromBar()
+        }
+    }
+
+    /// True while rehide should hold off: pointer in the band, or over an
+    /// elevated window (status-item menus, popovers, Nook's own panels).
+    func shouldDeferRehide() -> Bool {
+        if pointerInBand { return true }
+        return pointerIsOverElevatedWindow()
+    }
+
+    private func pointerIsOverElevatedWindow() -> Bool {
+        let location = NSEvent.mouseLocation
+        guard
+            let primary = NSScreen.screens.first,
+            let windows = CGWindowListCopyWindowInfo(
+                [.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID
+            ) as? [[String: Any]]
+        else { return false }
+        // CG window bounds are top-left-origin global coordinates.
+        let cgPoint = CGPoint(x: location.x, y: primary.frame.maxY - location.y)
+        for window in windows {
+            guard
+                let layer = window[kCGWindowLayer as String] as? Int, layer > 0,
+                let bounds = window[kCGWindowBounds as String] as? [String: CGFloat],
+                let x = bounds["X"], let y = bounds["Y"],
+                let width = bounds["Width"], let height = bounds["Height"]
+            else { continue }
+            if CGRect(x: x, y: y, width: width, height: height).contains(cgPoint) {
+                return true
             }
         }
+        return false
     }
 
     private func clicked(_ event: NSEvent) {
@@ -101,7 +133,12 @@ final class MenuBarBandMonitor {
                 appState.toggle(reason: .click)
             }
         } else if appState.isRevealed {
-            appState.rehideTriggered(.clickedElsewhere)
+            // A click inside a status-item menu/popover is part of using the
+            // revealed items — only clicks on ordinary content count as
+            // "elsewhere".
+            if !pointerIsOverElevatedWindow() {
+                appState.rehideTriggered(.clickedElsewhere)
+            }
         }
     }
 

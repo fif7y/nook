@@ -97,6 +97,10 @@ final class AppState {
         dispatch(rehide.handle(.pointerReturned))
     }
 
+    func pointerLeftBand() {
+        dispatch(rehide.handle(.pointerLeft))
+    }
+
     var isRevealed: Bool {
         if case .revealed = rehide.state { return true }
         return false
@@ -144,15 +148,7 @@ final class AppState {
                     dispatch(rehide.handle(.transitionSettled))
                 }
             case .armTimer(let deadline):
-                rehideTimer?.invalidate()
-                rehideTimer = Timer.scheduledTimer(
-                    withTimeInterval: max(0, deadline.timeIntervalSinceNow),
-                    repeats: false
-                ) { [weak self] _ in
-                    Task { @MainActor in
-                        self?.rehideTriggered(.delayExpired)
-                    }
-                }
+                scheduleRehideTimer(at: deadline)
             case .cancelTimer:
                 rehideTimer?.invalidate()
                 rehideTimer = nil
@@ -160,40 +156,78 @@ final class AppState {
         }
     }
 
+    /// Rehide fires only when the user has actually moved on: while the
+    /// pointer is in the menubar band or over an elevated window (an open
+    /// status-item menu or popover), the countdown quietly re-arms.
+    private func scheduleRehideTimer(at deadline: Date) {
+        rehideTimer?.invalidate()
+        rehideTimer = Timer.scheduledTimer(
+            withTimeInterval: max(0, deadline.timeIntervalSinceNow),
+            repeats: false
+        ) { [weak self] _ in
+            Task { @MainActor in
+                guard let self else { return }
+                if self.bandMonitor?.shouldDeferRehide() == true {
+                    self.scheduleRehideTimer(at: Date().addingTimeInterval(1.5))
+                } else {
+                    self.rehideTriggered(.delayExpired)
+                }
+            }
+        }
+    }
+
     /// Menubar-positional sections: Nook's own chevron is the visible/hidden
-    /// boundary. Anything the user ⌘-drags to the LEFT of it (larger agent
-    /// position value) is adopted into Hidden; dragging right of it back to
-    /// Visible. Always-Hidden stays settings-managed for now.
-    private func adoptSectionsFromBar() {
-        let positions = AgentPositions.read()
-        let nookPrefix = "status:\(Bundle.main.bundleIdentifier ?? "app.fif7y.Nook")::"
-        // Boundary = Nook's main status item (not separators). Its exact title
-        // varies, so match our bundle and take the item closest to the middle
-        // is overkill — there is exactly one non-separator Nook item.
+    /// boundary. Anything sitting LEFT of it (smaller AX x) is adopted into
+    /// Hidden; right of it back to Visible. Uses live AX frames — NOT the
+    /// agent's positions plist, which lists new items only lazily (M1 finding).
+    /// Always-Hidden stays settings-managed for now.
+    func adoptSectionsFromBar() {
+        Task {
+            let snap = await engine.snapshot()
+            snapshot = snap
+            adopt(from: snap)
+        }
+    }
+
+    /// Which side of the chevron each item sat on at the last pass (true =
+    /// left). Reflows shift every frame but never an item's SIDE — only a real
+    /// user drag across the boundary (or moving the chevron itself) does. That
+    /// makes side-change the safe adoption trigger: a settings-assigned item
+    /// still sitting on its old side is never "corrected" back.
+    private var lastAdoptionSides: [String: Bool] = [:]
+
+    private func adopt(from snap: EngineSnapshot) {
+        guard settings.showStatusItem else { return }
+        let nookBundle = Bundle.main.bundleIdentifier ?? "app.fif7y.Nook"
         guard
-            settings.showStatusItem,
-            let boundary = positions
-                .filter({ $0.key.hasPrefix(nookPrefix) && !$0.key.contains("Separator") })
-                .map(\.value)
-                .first
+            let chevron = snap.items.first(where: {
+                $0.id.bundleID == nookBundle && !$0.id.rawValue.contains("Separator")
+            }),
+            let chevronX = chevron.frame?.minX
         else { return }
 
+        let isFirstPass = lastAdoptionSides.isEmpty
         var model = settings.sectionModel
         var changed = false
-        for (tag, position) in positions {
-            guard tag.hasPrefix("status:"),
-                  !tag.hasPrefix(nookPrefix),
-                  !tag.hasPrefix("status:com.apple.")
+        for item in snap.items {
+            guard let bundle = item.id.bundleID,
+                  bundle != nookBundle,
+                  !bundle.hasPrefix("com.apple."),
+                  let frame = item.frame
             else { continue }
-            let id = ItemID(rawValue: tag)
-            let current = model.section(of: id)
+            let isLeft = frame.minX < chevronX
+            let previousSide = lastAdoptionSides[item.id.rawValue]
+            lastAdoptionSides[item.id.rawValue] = isLeft
+            // First sighting establishes a baseline; only a side CHANGE adopts.
+            guard !isFirstPass, let previousSide, previousSide != isLeft else { continue }
+            let current = model.section(of: item.id)
             guard current != .alwaysHidden else { continue }
-            let desired: NookCore.Section = position > boundary ? .hidden : .visible
+            let desired: NookCore.Section = isLeft ? .hidden : .visible
             guard desired != current else { continue }
             if desired == .visible {
-                model.assignments.removeValue(forKey: id)
+                model.assignments.removeValue(forKey: item.id)
             } else {
-                model.assignments[id] = desired
+                model.assignments[item.id] = desired
             }
             changed = true
         }
