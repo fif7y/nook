@@ -219,11 +219,20 @@ final class AppState {
             return
         }
 
-        // Neighbors in the DESIRED order that have live frames.
+        // Neighbors in the DESIRED order that have live frames — adjusted into
+        // the "lifted" coordinate space: once the drag picks the item up, the
+        // gap it leaves closes, shifting everything right of its origin left
+        // by one item width. Targets computed in pre-lift coordinates land one
+        // slot off (verified: consistent ±itemWidth misses in the logs).
+        func lifted(_ neighborFrame: CGRect) -> CGRect {
+            neighborFrame.minX > frame.midX
+                ? neighborFrame.offsetBy(dx: -frame.width, dy: 0)
+                : neighborFrame
+        }
         let ordered = editorItems(in: section)
         let index = ordered.firstIndex(where: { $0.id == id }) ?? ordered.count
-        let leftNeighbor = ordered[..<index].reversed().compactMap(\.frame).first
-        let rightNeighbor = ordered[(min(index + 1, ordered.count))...].compactMap(\.frame).first
+        let leftNeighbor = ordered[..<index].reversed().compactMap(\.frame).first.map(lifted)
+        let rightNeighbor = ordered[(min(index + 1, ordered.count))...].compactMap(\.frame).first.map(lifted)
 
         let managedMinX = snap.items
             .filter { $0.id.bundleID?.hasPrefix("com.apple.") != true && !$0.id.isSystemModule }
@@ -249,9 +258,13 @@ final class AppState {
         // leave the trailing status area.
         targetX = min(max(targetX, 200), screen.frame.maxX - 60)
 
-        // Skip only when the item already sits between the right neighbors.
-        let alreadyPlaced = abs(frame.midX - targetX) < max(frame.width, 20)
-        guard !alreadyPlaced else { return }
+        // Skip only when the item is genuinely at its slot already — a full
+        // icon-width tolerance silently swallowed every one-slot move.
+        let alreadyPlaced = abs(frame.midX - targetX) < 10
+        guard !alreadyPlaced else {
+            NookLog.log("place: \(id.rawValue) already at slot (x=\(frame.midX), target=\(targetX))")
+            return
+        }
 
         NookLog.log("place: dragging \(id.rawValue) x=\(frame.midX) → \(targetX) (section \(section))")
         await ItemMover.cmdDrag(
