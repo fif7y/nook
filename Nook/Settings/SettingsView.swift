@@ -96,6 +96,12 @@ struct GeneralSettingsTab: View {
                     .foregroundStyle(.tertiary)
             }
 
+            Section {
+                Button("Replay the intro") {
+                    OnboardingController.shared.present(appState: appState)
+                }
+            }
+
             Section("New items") {
                 Picker("New menu bar items go to", selection: binding(\.sectionModel.newItemsDestination)) {
                     Text("Visible").tag(NookCore.Section.visible)
