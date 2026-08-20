@@ -14,7 +14,7 @@ struct SettingsView: View {
         TabView {
             GeneralSettingsTab()
                 .tabItem { Label("General", systemImage: "gearshape") }
-            MenuBarSettingsTab()
+            MenuBarTab()
                 .tabItem { Label("Menu Bar", systemImage: "menubar.rectangle") }
             DisplaysSettingsTab()
                 .tabItem { Label("Displays", systemImage: "display.2") }
@@ -119,97 +119,6 @@ struct LabeledSlider: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 40, alignment: .trailing)
         }
-    }
-}
-
-// MARK: - Menu Bar (layout editor — functional skeleton, designed pass in M4)
-
-struct MenuBarSettingsTab: View {
-    @Environment(AppState.self) private var appState
-
-    var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 16) {
-                if !appState.engineCanHide {
-                    Label(
-                        "Hiding is unavailable on this macOS build. Reordering still works.",
-                        systemImage: "exclamationmark.triangle"
-                    )
-                    .foregroundStyle(.orange)
-                }
-                ForEach([NookCore.Section.visible, .hidden, .alwaysHidden], id: \.self) { section in
-                    SectionRow(section: section)
-                }
-            }
-            .padding(20)
-        }
-    }
-}
-
-struct SectionRow: View {
-    @Environment(AppState.self) private var appState
-    let section: NookCore.Section
-
-    private var title: String {
-        switch section {
-        case .visible: "Visible"
-        case .hidden: "Hidden"
-        case .alwaysHidden: "Always Hidden"
-        }
-    }
-
-    private var items: [ObservedItem] {
-        (appState.snapshot?.items ?? []).filter {
-            !$0.id.isSystemModule
-                && $0.id.bundleID != Bundle.main.bundleIdentifier
-                && appState.settings.sectionModel.section(of: $0.id) == section
-        }
-    }
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text(title)
-                .font(.headline)
-            HStack(spacing: 6) {
-                if items.isEmpty {
-                    Text("Drop items here")
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity)
-                } else {
-                    ForEach(items, id: \.id.rawValue) { item in
-                        ItemChip(item: item)
-                            .draggable(item.id.rawValue)
-                    }
-                    Spacer(minLength: 0)
-                }
-            }
-            .padding(10)
-            .frame(minHeight: 44)
-            .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 10))
-            .dropDestination(for: String.self) { dropped, _ in
-                guard let raw = dropped.first else { return false }
-                let id = ItemID(rawValue: raw)
-                if section == .visible {
-                    appState.settings.sectionModel.assignments.removeValue(forKey: id)
-                } else {
-                    appState.settings.sectionModel.assignments[id] = section
-                }
-                appState.settingsChanged()
-                return true
-            }
-        }
-    }
-}
-
-struct ItemChip: View {
-    let item: ObservedItem
-
-    var body: some View {
-        Text(item.appName ?? item.id.bundleID?.components(separatedBy: ".").last ?? "?")
-            .font(.callout)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 5)
-            .background(.background.secondary, in: Capsule())
     }
 }
 

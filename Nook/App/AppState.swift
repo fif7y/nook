@@ -18,9 +18,11 @@ final class AppState {
     private var rehide = RehideStateMachine()
     private var rehideTimer: Timer?
     private var statusItem: NookStatusItem?
+    private var separators: SeparatorManager?
     private var bandMonitor: MenuBarBandMonitor?
     private var hotkey: HotkeyManager?
     private var eventTask: Task<Void, Never>?
+    private var applyOrderWork: Task<Void, Never>?
 
     // MARK: - Lifecycle
 
@@ -45,6 +47,8 @@ final class AppState {
         if settings.showStatusItem {
             statusItem = NookStatusItem(appState: self)
         }
+        separators = SeparatorManager(appState: self)
+        separators?.sync(with: settings.separators)
 
         let bandMonitor = MenuBarBandMonitor(appState: self)
         bandMonitor.start()
@@ -138,9 +142,88 @@ final class AppState {
             statusItem = nil
         }
         hotkey?.register(settings.hotkey)
+        separators?.sync(with: settings.separators)
         Task {
             await engine.setSteadyExtras(settings.hideSystemExtras)
             await engine.setModel(settings.sectionModel)
+        }
+    }
+
+    // MARK: - Layout editor intents
+
+    /// Move an item to `section`, inserted before `beforeID` (nil = append).
+    /// Updates assignment + explicit order, then schedules a physical
+    /// order-apply (debounced — the agent restart blinks the bar once).
+    func moveItem(_ id: ItemID, to section: NookCore.Section, before beforeID: ItemID?) {
+        var model = settings.sectionModel
+        if section == .visible {
+            model.assignments.removeValue(forKey: id)
+        } else {
+            model.assignments[id] = section
+        }
+        for key in model.order.keys {
+            model.order[key]?.removeAll { $0 == id }
+        }
+        var order = model.order[section] ?? currentOrder(in: section)
+        order.removeAll { $0 == id }
+        if let beforeID, let index = order.firstIndex(of: beforeID) {
+            order.insert(id, at: index)
+        } else {
+            order.append(id)
+        }
+        model.order[section] = order
+        settings.sectionModel = model
+        settings.save()
+        NookLog.log("editor: move \(id.rawValue) → \(section) before=\(beforeID?.rawValue ?? "end")")
+        Task { await engine.setModel(model) }
+        scheduleApplyOrder()
+    }
+
+    /// The on-screen left-to-right order of a section right now (fallback when
+    /// no explicit order exists yet).
+    func currentOrder(in section: NookCore.Section) -> [ItemID] {
+        editorItems(in: section).map(\.id)
+    }
+
+    /// Items the layout editor shows for a section: third-party only (Apple
+    /// items are out of scope), Nook's own items excluded, and CONCEALED items
+    /// included — they drop out of AX observation but absolutely belong in the
+    /// editor (frame nil, icon from the app bundle).
+    func editorItems(in section: NookCore.Section) -> [ObservedItem] {
+        var byID: [ItemID: ObservedItem] = [:]
+        for item in snapshot?.items ?? [] {
+            byID[item.id] = item
+        }
+        for id in snapshot?.concealed ?? [] where byID[id] == nil {
+            let appName = id.bundleID.flatMap {
+                NSRunningApplication.runningApplications(withBundleIdentifier: $0).first?.localizedName
+            }
+            byID[id] = ObservedItem(id: id, frame: nil, appName: appName)
+        }
+        let all = byID.values.filter {
+            !$0.id.isSystemModule
+                && $0.id.bundleID != Bundle.main.bundleIdentifier
+                && $0.id.bundleID?.hasPrefix("com.apple.") != true
+                && settings.sectionModel.section(of: $0.id) == section
+        }
+        let explicit = settings.sectionModel.order[section] ?? []
+        return all.sorted { lhs, rhs in
+            let li = explicit.firstIndex(of: lhs.id) ?? Int.max
+            let ri = explicit.firstIndex(of: rhs.id) ?? Int.max
+            if li != ri { return li < ri }
+            return (lhs.frame?.minX ?? .greatestFiniteMagnitude)
+                < (rhs.frame?.minX ?? .greatestFiniteMagnitude)
+        }
+    }
+
+    private func scheduleApplyOrder() {
+        applyOrderWork?.cancel()
+        applyOrderWork = Task {
+            try? await Task.sleep(for: .seconds(1.5))
+            guard !Task.isCancelled else { return }
+            NookLog.log("editor: applying order (agent restart)")
+            await engine.applyOrder()
+            snapshot = await engine.snapshot()
         }
     }
 

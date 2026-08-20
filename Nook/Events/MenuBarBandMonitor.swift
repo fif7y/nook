@@ -188,10 +188,10 @@ final class MenuBarBandMonitor {
                 appState.toggle(reason: .click)
             }
         } else if appState.isRevealed {
-            // A click inside a status-item menu/popover is part of using the
-            // revealed items — only clicks on ordinary content count as
-            // "elsewhere".
-            if !pointerIsOverElevatedWindow() {
+            // Clicks inside Nook's own UI (settings/onboarding) or a
+            // status-item menu/popover are part of using the revealed items —
+            // only clicks on ordinary content count as "elsewhere".
+            if !NSApp.isActive, !pointerIsOverElevatedWindow() {
                 appState.rehideTriggered(.clickedElsewhere)
             }
         }
