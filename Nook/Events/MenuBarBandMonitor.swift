@@ -5,13 +5,16 @@
 
 import AppKit
 import NookCore
+import NookEngine
 
 final class MenuBarBandMonitor {
     private weak var appState: AppState?
     private var mouseMonitor: Any?
     private var clickMonitor: Any?
+    private var dragMonitor: Any?
     private var hoverTimer: Timer?
     private var pointerInBand = false
+    private var cmdDragActive = false
     private var lastDisplayUUID: String?
 
     init(appState: AppState) {
@@ -29,13 +32,54 @@ final class MenuBarBandMonitor {
         ) { [weak self] event in
             self?.clicked(event)
         }
+        // ⌘-drag tracking: rehide must never fire mid-drag, and adoption runs
+        // the moment the drag ends — before the next conceal can act on a
+        // stale model (which hid everything except the freshly dragged item).
+        dragMonitor = NSEvent.addGlobalMonitorForEvents(
+            matching: [.leftMouseDragged, .leftMouseUp]
+        ) { [weak self] event in
+            self?.dragEvent(event)
+        }
+    }
+
+    private func dragEvent(_ event: NSEvent) {
+        guard let appState else { return }
+        switch event.type {
+        case .leftMouseDragged:
+            guard event.modifierFlags.contains(.command) else { return }
+            let location = NSEvent.mouseLocation
+            let screen = NSScreen.screens.first { NSMouseInRect(location, $0.frame, false) }
+            guard let screen, isInMenuBarBand(location, of: screen) else { return }
+            if !cmdDragActive {
+                cmdDragActive = true
+                appState.pointerReturnedToBand()  // cancels any rehide countdown
+                NookLog.log("band: ⌘-drag started")
+            }
+        case .leftMouseUp:
+            guard cmdDragActive else { return }
+            cmdDragActive = false
+            NookLog.log("band: ⌘-drag ended → adopting")
+            // Give MenuBarAgent a beat to finalize the new position, then
+            // adopt before rehide can run a stale conceal.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+                guard let appState = self?.appState else { return }
+                appState.adoptSectionsFromBar()
+                if appState.isRevealed {
+                    appState.pointerLeftBand()  // re-arm the countdown
+                }
+            }
+        default:
+            break
+        }
     }
 
     func stop() {
         if let mouseMonitor { NSEvent.removeMonitor(mouseMonitor) }
         if let clickMonitor { NSEvent.removeMonitor(clickMonitor) }
+        if let dragMonitor { NSEvent.removeMonitor(dragMonitor) }
         mouseMonitor = nil
         clickMonitor = nil
+        dragMonitor = nil
         hoverTimer?.invalidate()
     }
 

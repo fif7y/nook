@@ -206,15 +206,15 @@ final class AppState {
     /// Always-Hidden stays settings-managed for now.
     func adoptSectionsFromBar(retry: Int = 0) {
         Task {
-            // Mid-transition/settling bars give false frames — defer, don't
-            // drop (hover cycles reset the settle clock constantly; a plain
-            // skip starves adoption and ⌘-drags never land).
-            if isTransitioning || Date().timeIntervalSince(lastSettleAt) <= 1.5 {
-                guard retry < 5 else {
+            // Mid-transition bars give false frames — defer briefly. (Only
+            // in-flight transitions block; a settled bar has stable frames.
+            // The old post-settle quiet window starved adoption entirely.)
+            if isTransitioning {
+                guard retry < 10 else {
                     NookLog.log("adopt: gave up after \(retry) deferrals")
                     return
                 }
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(for: .milliseconds(300))
                 adoptSectionsFromBar(retry: retry + 1)
                 return
             }
