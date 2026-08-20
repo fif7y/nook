@@ -156,10 +156,16 @@ private struct ItemTile: View {
         return item.appName ?? item.id.bundleID?.components(separatedBy: ".").last ?? "?"
     }
 
+    private var isSystemIcon: Bool {
+        EngineGoldenGate.systemItem(for: item.id) != nil
+    }
+
     /// Same-bundle siblings hide together (assertion granularity is per
     /// bundle) — surface that with a link badge instead of hiding the fact.
+    /// System icons are exempt: they share the agent's bundle but hide
+    /// individually via the system allowlist.
     private var hasBundleSiblings: Bool {
-        guard let bundle = item.id.bundleID else { return false }
+        guard !isSystemIcon, let bundle = item.id.bundleID else { return false }
         return (appState.snapshot?.items ?? []).contains {
             $0.id != item.id && $0.id.bundleID == bundle
         }
@@ -193,6 +199,15 @@ private struct ItemTile: View {
                         .background(Circle().fill(.background))
                         .offset(x: 4, y: -4)
                         .help("Icons from the same app hide together")
+                }
+                if isSystemIcon {
+                    Image(systemName: "apple.logo")
+                        .font(.system(size: 7, weight: .bold))
+                        .foregroundStyle(.secondary)
+                        .padding(2)
+                        .background(Circle().fill(.background))
+                        .offset(x: 4, y: -4)
+                        .help("System icon — Nook places it; whether it exists in the bar is set in System Settings › Control Center")
                 }
             }
             Text(displayName)
