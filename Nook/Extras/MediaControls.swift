@@ -95,14 +95,25 @@ final class ExtrasManager {
     /// same bar reflow and reads as one motion. The camera/mic indicator
     /// overrides its section while hardware is live — an indicator that hides
     /// when active would be lying.
-    func apply(model: SectionModel, revealed: Set<NookCore.Section>) {
+    func apply(
+        model: SectionModel,
+        revealed: Set<NookCore.Section>,
+        systemCameraPillVisible: Bool
+    ) {
         for (id, item) in items {
             guard let spec = specs[id] else { continue }
             let section = model.section(of: Self.itemID(for: spec))
             var visible = section == .visible || revealed.contains(section)
             if spec.kind == .cameraMicIndicator {
+                // macOS force-shows its own camera pill through the assertion
+                // when the camera is live (privacy override). Nook's indicator
+                // fills the gap, never duplicates: it self-asserts only while
+                // hardware is active AND the system pill isn't on screen.
                 let active = cameraMicMonitor?.isActive ?? false
-                visible = visible || active
+                visible = visible || (active && !systemCameraPillVisible)
+                if systemCameraPillVisible, section != .visible, !revealed.contains(section) {
+                    visible = false
+                }
                 updateCameraSymbol(item, monitor: cameraMicMonitor)
             }
             item.length = visible ? NSStatusItem.squareLength : 0
@@ -112,7 +123,11 @@ final class ExtrasManager {
 
     private func applyCurrent() {
         guard let appState else { return }
-        apply(model: appState.settings.sectionModel, revealed: appState.revealedSectionsForExtras)
+        apply(
+            model: appState.settings.sectionModel,
+            revealed: appState.revealedSectionsForExtras,
+            systemCameraPillVisible: appState.systemCameraPillVisible
+        )
     }
 
     // MARK: Item construction

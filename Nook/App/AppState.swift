@@ -198,7 +198,7 @@ final class AppState {
         NookLog.log("editor: move \(id.rawValue) → \(section) before=\(beforeID?.rawValue ?? "end")")
         // Nook-owned extras change visibility with the model immediately —
         // placement below needs the item on screen to have a frame at all.
-        extras?.apply(model: model, revealed: currentRevealedSections)
+        extras?.apply(model: model, revealed: currentRevealedSections, systemCameraPillVisible: systemCameraPillVisible)
         Task {
             await engine.setModel(model)
             // Physically place the icon in its section's zone via a synthetic
@@ -394,6 +394,14 @@ final class AppState {
     /// asserting away Nook's bundle would take the chevron too.
     var revealedSectionsForExtras: Set<NookCore.Section> { currentRevealedSections }
 
+    /// macOS force-shows its camera pill through the assertion while the
+    /// camera is live; Nook's indicator defers to it to avoid duplication.
+    var systemCameraPillVisible: Bool {
+        (snapshot?.items ?? []).contains {
+            $0.id.rawValue.contains("menuextra.audiovideo") && $0.frame != nil
+        }
+    }
+
     private var currentRevealedSections: Set<NookCore.Section> {
         switch rehide.state {
         case .revealed(let sections, _):
@@ -410,7 +418,7 @@ final class AppState {
     private func dispatch(_ effects: [RehideEffect]) {
         defer {
             statusItem?.updateSymbol(revealed: isRevealed)
-            extras?.apply(model: settings.sectionModel, revealed: currentRevealedSections)
+            extras?.apply(model: settings.sectionModel, revealed: currentRevealedSections, systemCameraPillVisible: systemCameraPillVisible)
         }
         for effect in effects {
             switch effect {
@@ -564,6 +572,9 @@ final class AppState {
             Task {
                 await engine.setModel(settings.sectionModel)
                 snapshot = await engine.snapshot()
+                // The system camera pill appearing/vanishing is an
+                // itemsChanged — Nook's indicator defers to it live.
+                extras?.apply(model: settings.sectionModel, revealed: currentRevealedSections, systemCameraPillVisible: systemCameraPillVisible)
             }
         case .assertionTornDown:
             // Recovery = schedule a converge through the normal path.
