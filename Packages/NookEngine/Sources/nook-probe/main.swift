@@ -138,6 +138,16 @@ case "engine-test":
         let hiddenOK = !check.items.contains { $0.id.bundleID == bundleToHide }
         print("after conceal: target \(hiddenOK ? "GONE ✓" : "STILL VISIBLE ✗")")
 
+        // Regression: re-applying the same model while concealed must be a
+        // no-op (concealed items are unobservable — the engine must not
+        // conclude "nothing to conceal" and resurrect them).
+        await engine.setModel(model)
+        await engine.setModel(model)
+        try? await Task.sleep(for: .seconds(1))
+        check = await engine.snapshot()
+        let stableOK = !check.items.contains { $0.id.bundleID == bundleToHide }
+        print("after re-apply ×2: target \(stableOK ? "STILL GONE ✓" : "REAPPEARED ✗")")
+
         await engine.reveal([.hidden])
         check = await engine.snapshot()
         let revealedOK = check.items.contains { $0.id.bundleID == bundleToHide }
@@ -164,7 +174,7 @@ case "engine-test":
         await engine.conceal()
         await engine.setModel(SectionModel())  // restore: nothing hidden
         await engine.stop()
-        print(hiddenOK && revealedOK && soakFailures == 0 ? "ENGINE TEST PASS" : "ENGINE TEST FAIL")
+        print(hiddenOK && stableOK && revealedOK && soakFailures == 0 ? "ENGINE TEST PASS" : "ENGINE TEST FAIL")
         testDone = true
     }
     while !testDone {

@@ -152,7 +152,14 @@ public actor EngineGoldenGate: MenuBarEngine {
     /// single transition.
     private func converge() async {
         let snapshot = await refreshSnapshot()
-        let observedIDs = snapshot.items.map(\.id)
+        // "Existing" = observed OR currently concealed by us. Concealed items
+        // drop out of the AX tree entirely (macOS 27 single-window), so
+        // computing from observation alone concludes "nothing to conceal",
+        // re-allows the hidden bundles, they reappear, get re-hidden — an
+        // endless visible oscillation.
+        let observedIDs = Array(
+            Set(snapshot.items.map(\.id)).union(lastSnapshot?.concealed ?? [])
+        )
         let concealable = model.concealableBundleIDs(
             observedItems: observedIDs,
             revealing: revealedSections
