@@ -102,6 +102,10 @@ final class AppState {
                     revealed: revealed,
                     systemCameraPillVisible: self.systemCameraPillVisible
                 )
+                self.separators?.apply(
+                    model: self.settings.sectionModel,
+                    revealed: revealed
+                )
             }
             await engine.setSteadyExtras(settings.hideSystemExtras)
             await engine.setModel(settings.sectionModel)
@@ -283,8 +287,14 @@ final class AppState {
         // gap it leaves closes, shifting everything right of its origin left
         // by one item width. Targets computed in pre-lift coordinates land one
         // slot off (verified: consistent ±itemWidth misses in the logs).
+        // EXCEPT for Nook's own items (separators, extras): dragging an
+        // own-process item keeps the bar frozen — the gap does NOT close, so
+        // lifted targets land one width short and the drop bounces back
+        // (verified: raw-frame drop swaps, lifted-frame drop reverts).
+        let dragIsNookOwned = item.id.bundleID == nookBundle
         func lifted(_ neighborFrame: CGRect) -> CGRect {
-            neighborFrame.minX > frame.midX
+            guard !dragIsNookOwned else { return neighborFrame }
+            return neighborFrame.minX > frame.midX
                 ? neighborFrame.offsetBy(dx: -frame.width, dy: 0)
                 : neighborFrame
         }
@@ -469,6 +479,13 @@ final class AppState {
                 byID[id] = ObservedItem(id: id, frame: nil, appName: spec.shortcutName ?? nil)
             }
         }
+        // Separators too — same visibility-based hiding as extras.
+        for spec in settings.separators {
+            let id = SeparatorManager.itemID(for: spec)
+            if byID[id] == nil {
+                byID[id] = ObservedItem(id: id, frame: nil, appName: "Separator")
+            }
+        }
         // Drop stale twins the concealed set may still remember: a bundle is
         // never half-concealed, so a frame-nil entry whose bundle has a live
         // item is an old alias, not a second icon. (Nook's own extras are
@@ -521,13 +538,13 @@ final class AppState {
 
     // MARK: - Effects
 
-    /// True for Nook-owned proxy/extra items (NOT the chevron or separators):
-    /// they're section-manageable through their own visibility.
+    /// True for Nook-owned proxy/extra items (NOT the chevron): they're
+    /// section-manageable through their own visibility. Separators included —
+    /// they live in sections and hide with them, extras-style.
     static func isNookExtraID(_ id: ItemID) -> Bool {
         let raw = id.rawValue
         return raw.contains("::Nook.")
             && !raw.contains("Nook.StatusItem")
-            && !raw.contains("Nook.Separator")
     }
 
     /// Nook-owned items hide by their OWN visibility, not the assertion —
@@ -725,6 +742,7 @@ final class AppState {
                 // The system camera pill appearing/vanishing is an
                 // itemsChanged — Nook's indicator defers to it live.
                 extras?.apply(model: settings.sectionModel, revealed: currentRevealedSections, systemCameraPillVisible: systemCameraPillVisible)
+                separators?.apply(model: settings.sectionModel, revealed: currentRevealedSections)
             }
         case .assertionTornDown:
             // Recovery = schedule a converge through the normal path.

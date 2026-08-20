@@ -65,10 +65,23 @@ public enum SeparatorStyle: String, Codable, CaseIterable, Sendable {
 public struct SeparatorSpec: Codable, Equatable, Identifiable, Sendable {
     public var id: UUID
     public var style: SeparatorStyle
+    /// Glyph opacity in the bar (invisible spacers ignore it).
+    public var opacity: Double
 
-    public init(id: UUID = UUID(), style: SeparatorStyle) {
+    public init(id: UUID = UUID(), style: SeparatorStyle, opacity: Double = 0.55) {
         self.id = id
         self.style = style
+        self.opacity = opacity
+    }
+
+    // Resilient decode: specs saved before `opacity` existed keep the old look.
+    private enum CodingKeys: String, CodingKey { case id, style, opacity }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        style = try c.decode(SeparatorStyle.self, forKey: .style)
+        opacity = try c.decodeIfPresent(Double.self, forKey: .opacity) ?? 0.55
     }
 }
 

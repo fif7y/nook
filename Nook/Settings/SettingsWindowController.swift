@@ -24,9 +24,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         )
         let window = NSWindow(contentViewController: hosting)
         window.title = "Nook Settings"
-        window.styleMask = [.titled, .closable, .miniaturizable]
+        // Sidebar shell: the sidebar runs under a transparent titlebar, so the
+        // window chrome disappears and only the traffic lights remain.
+        window.styleMask = [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView]
+        window.titlebarAppearsTransparent = true
+        window.titleVisibility = .hidden
         window.isReleasedWhenClosed = false
-        window.setContentSize(NSSize(width: 560, height: 520))
+        window.setContentSize(NSSize(width: 780, height: 580))
+        window.minSize = NSSize(width: 720, height: 520)
         window.center()
         // Floating: settings is used in tandem with menubar interactions that
         // briefly activate other apps — it must never sink under their windows.

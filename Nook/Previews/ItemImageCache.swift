@@ -144,13 +144,26 @@ enum ItemImageCache {
     }
 
     private static var nookItemSymbols: [String: String] = [:]
+    private static var nookItemImages: [String: NSImage] = [:]
 
     /// ExtrasManager registers each Nook item's SF Symbol by item title.
     static func registerNookItem(title: String, symbol: String) {
         nookItemSymbols[title] = symbol
     }
 
+    /// Direct image registration for Nook items whose glyph is not an SF
+    /// Symbol (separators render their text glyph).
+    static func registerNookItem(title: String, image: NSImage) {
+        nookItemImages[title] = image
+    }
+
     static func icon(for item: ItemID) -> NSImage? {
+        // Nook renders its own items' glyphs — a bar capture of them only
+        // adds crop-and-upscale fuzz (a 4px separator dot blown up to tile
+        // size), so the registered image outranks captures.
+        if let image = nookItemImages.first(where: { item.rawValue.hasSuffix($0.key) })?.value {
+            return image
+        }
         if preferBarIcons, let capture = barCaptures[item.rawValue] {
             return capture
         }

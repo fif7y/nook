@@ -12,9 +12,9 @@ struct MenuBarTab: View {
     @Environment(AppState.self) private var appState
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                if !appState.engineCanHide {
+        // No own ScrollView — the settings shell provides scrolling + padding.
+        VStack(alignment: .leading, spacing: 14) {
+            if !appState.engineCanHide {
                     Label(
                         "Hiding is unavailable on this macOS build — reordering still works.",
                         systemImage: "exclamationmark.triangle"
@@ -75,8 +75,6 @@ struct MenuBarTab: View {
                     .padding(.top, 6)
 
                 SeparatorStrip()
-            }
-            .padding(20)
         }
         .animation(.spring(duration: 0.3), value: appState.settings.sectionModel)
         // Editing the bar shows the bar: reveal everything while this tab is
@@ -185,6 +183,9 @@ private struct ItemTile: View {
     @State private var targeted = false
 
     private var displayName: String {
+        if item.id.rawValue.contains("Nook.Separator") {
+            return "Separator"
+        }
         if item.id.rawValue.contains("::com.apple.menuextra.") {
             let suffix = item.id.rawValue.components(separatedBy: ".").last ?? "System"
             return suffix.replacingOccurrences(of: "-", with: " ").capitalized
@@ -201,7 +202,9 @@ private struct ItemTile: View {
     /// System icons are exempt: they share the agent's bundle but hide
     /// individually via the system allowlist.
     private var hasBundleSiblings: Bool {
-        guard !isSystemIcon, let bundle = item.id.bundleID else { return false }
+        // Nook's own items (extras, separators) hide individually.
+        guard !isSystemIcon, let bundle = item.id.bundleID,
+              bundle != Bundle.main.bundleIdentifier else { return false }
         return (appState.snapshot?.items ?? []).contains {
             $0.id != item.id && $0.id.bundleID == bundle
         }
@@ -468,6 +471,7 @@ private struct SeparatorChip: View {
                 Text(separator.style == .space ? "␣" : separator.style.rawValue)
                     .font(.system(size: 14, weight: .medium))
                     .foregroundStyle(separator.style == .space ? .tertiary : .secondary)
+                    .opacity(separator.style == .space ? 1 : max(separator.opacity, 0.25))
                     .frame(width: 30, height: 30)
                     .background(
                         RoundedRectangle(cornerRadius: 9)
@@ -489,12 +493,12 @@ private struct SeparatorChip: View {
         .onHover { hovered = $0 }
         .popover(isPresented: $showsChooser, arrowEdge: .bottom) {
             // The chooser renders the real glyphs, current one ring-selected.
+            VStack(spacing: 10) {
             HStack(spacing: 6) {
                 ForEach(SeparatorStyle.allCases, id: \.self) { style in
                     Button {
                         separator.style = style
                         appState.settingsChanged()
-                        showsChooser = false
                     } label: {
                         Text(style == .space ? "␣" : style.rawValue)
                             .font(.system(size: 14, weight: .medium))
@@ -512,7 +516,29 @@ private struct SeparatorChip: View {
                     .help(style.displayName)
                 }
             }
+            if separator.style != .space {
+                HStack(spacing: 8) {
+                    Image(systemName: "circle.lefthalf.filled")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Slider(value: Binding(
+                        get: { separator.opacity },
+                        set: { value in
+                            separator.opacity = value
+                            appState.settingsChanged()
+                        }
+                    ), in: 0.1...1)
+                    Text("\(Int(separator.opacity * 100))%")
+                        .font(.caption)
+                        .monospacedDigit()
+                        .foregroundStyle(.secondary)
+                        .frame(width: 34, alignment: .trailing)
+                }
+                .help("Separator opacity in the menu bar")
+            }
+            }
             .padding(10)
+            .frame(width: 240)
         }
     }
 }
