@@ -89,6 +89,16 @@ final class AppState {
 
         Task {
             await engine.start()
+            // Extras change size inside the same agent reflow as assertion
+            // swaps — the only way their motion matches everything else's.
+            await engine.setReflowCompanion { [weak self] revealed in
+                guard let self else { return }
+                self.extras?.apply(
+                    model: self.settings.sectionModel,
+                    revealed: revealed,
+                    systemCameraPillVisible: self.systemCameraPillVisible
+                )
+            }
             await engine.setSteadyExtras(settings.hideSystemExtras)
             await engine.setModel(settings.sectionModel)
             snapshot = await engine.snapshot()
@@ -196,9 +206,8 @@ final class AppState {
         settings.sectionModel = model
         settings.save()
         NookLog.log("editor: move \(id.rawValue) → \(section) before=\(beforeID?.rawValue ?? "end")")
-        // Nook-owned extras change visibility with the model immediately —
-        // placement below needs the item on screen to have a frame at all.
-        extras?.apply(model: model, revealed: currentRevealedSections, systemCameraPillVisible: systemCameraPillVisible)
+        // Extras visibility applies via the engine's reflow companion during
+        // the converge below — same reflow, same motion as everything else.
         Task {
             await engine.setModel(model)
             // Physically place the icon in its section's zone via a synthetic
@@ -416,10 +425,10 @@ final class AppState {
     }
 
     private func dispatch(_ effects: [RehideEffect]) {
-        defer {
-            statusItem?.updateSymbol(revealed: isRevealed)
-            extras?.apply(model: settings.sectionModel, revealed: currentRevealedSections, systemCameraPillVisible: systemCameraPillVisible)
-        }
+        // Extras are NOT applied here: the engine's reflow companion applies
+        // them inside the converge so their size change shares the assertion
+        // swap's reflow. Applying pre-reflow here put them on a second clock.
+        defer { statusItem?.updateSymbol(revealed: isRevealed) }
         for effect in effects {
             switch effect {
             case .none:

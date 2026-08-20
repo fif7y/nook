@@ -22,6 +22,22 @@ public actor EngineGoldenGate: MenuBarEngine {
     private let enumerator = ItemEnumerator()
     private var prefsWatcher: AgentPrefsWatcher?
 
+    /// Called on the main actor at the exact moment an assertion swap is
+    /// issued (and on assertion drop), passing the revealed sections. App-side
+    /// items that hide by their own width use this to change size in the SAME
+    /// agent reflow — separate passes animate separately and read as sliding.
+    public var reflowCompanion: (@MainActor @Sendable (Set<Section>) -> Void)?
+
+    public func setReflowCompanion(_ companion: @MainActor @Sendable @escaping (Set<Section>) -> Void) {
+        reflowCompanion = companion
+    }
+
+    private func notifyReflowCompanion() {
+        guard let reflowCompanion else { return }
+        let revealed = revealedSections
+        Task { @MainActor in reflowCompanion(revealed) }
+    }
+
     private var model = SectionModel()
     private var revealedSections: Set<Section> = []
     /// Steady-assertion mode: hold an assertion even when nothing is
@@ -199,6 +215,7 @@ public actor EngineGoldenGate: MenuBarEngine {
         if concealable.isEmpty, hiddenSystem.isEmpty, !steadyExtras {
             // Nothing to hide and extras are allowed back: drop the assertion.
             invalidateAssertion()
+            notifyReflowCompanion()
             _ = await refreshSnapshot()
             return
         }
@@ -244,6 +261,10 @@ public actor EngineGoldenGate: MenuBarEngine {
         let handle = AssessmentMode.activate(allowing: allowedSystem, bundleIDs: Array(allowedBundles)) { error in
             activationBox.resolve(error == nil)
         }
+        // Companion items change size NOW so the agent coalesces their reflow
+        // with the assertion swap it's about to animate.
+        notifyReflowCompanion()
+
         var activated = false
         if let handle {
             assertion = handle
