@@ -228,29 +228,128 @@ private struct ItemTile: View {
 /// extras under assertions, because Nook controls their visibility directly.
 private struct NookItemsStrip: View {
     @Environment(AppState.self) private var appState
+    @State private var shortcutNames: [String] = []
+
+    private func hasKind(_ kind: ExtraKind) -> Bool {
+        appState.settings.extraItems.contains { $0.kind == kind }
+    }
+
+    private func toggleKind(_ kind: ExtraKind, on: Bool) {
+        if on, !hasKind(kind) {
+            appState.settings.extraItems.append(ExtraItemSpec(kind: kind))
+        } else if !on {
+            appState.settings.extraItems.removeAll { $0.kind == kind }
+        }
+        appState.settingsChanged()
+    }
 
     var body: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "playpause")
-                .font(.caption)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 6) {
+                Image(systemName: "sparkles")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text("Nook items")
+                    .font(.headline)
+                Text("Nook-made stand-ins for the system extras — these live in any section")
+                    .font(.caption)
+                    .foregroundStyle(.tertiary)
+                Spacer()
+                Menu {
+                    if shortcutNames.isEmpty {
+                        Text("No shortcuts in your library")
+                    }
+                    ForEach(shortcutNames, id: \.self) { name in
+                        Button(name) {
+                            appState.settings.extraItems.append(
+                                ExtraItemSpec(kind: .shortcut, shortcutName: name, symbol: "bolt.fill")
+                            )
+                            appState.settingsChanged()
+                        }
+                    }
+                } label: {
+                    Label("Shortcut", systemImage: "plus")
+                        .font(.caption)
+                }
+                .menuStyle(.borderlessButton)
+                .fixedSize()
+                .onAppear {
+                    Task.detached {
+                        let names = ExtrasManager.availableShortcuts()
+                        await MainActor.run { shortcutNames = names }
+                    }
+                }
+            }
+
+            VStack(alignment: .leading, spacing: 6) {
+                NookItemRow(
+                    symbol: "playpause.fill", title: "Media controls",
+                    caption: "Click plays/pauses, right-click for tracks — works with every player",
+                    isOn: hasKind(.mediaControls)
+                ) { toggleKind(.mediaControls, on: $0) }
+                NookItemRow(
+                    symbol: "video.fill", title: "Camera & mic indicator",
+                    caption: "Appears whenever any camera or mic is live — even from Hidden",
+                    isOn: hasKind(.cameraMicIndicator)
+                ) { toggleKind(.cameraMicIndicator, on: $0) }
+                NookItemRow(
+                    symbol: "wifi", title: "AirDrop",
+                    caption: "Opens Finder's AirDrop view",
+                    isOn: hasKind(.airdrop)
+                ) { toggleKind(.airdrop, on: $0) }
+                ForEach(appState.settings.extraItems.filter { $0.kind == .shortcut }) { spec in
+                    HStack(spacing: 8) {
+                        Image(systemName: spec.symbol ?? "bolt.fill")
+                            .frame(width: 18)
+                            .foregroundStyle(.secondary)
+                        Text(spec.shortcutName ?? "Shortcut")
+                            .font(.callout)
+                        Text("Runs your shortcut")
+                            .font(.caption)
+                            .foregroundStyle(.tertiary)
+                        Spacer()
+                        Button {
+                            appState.settings.extraItems.removeAll { $0.id == spec.id }
+                            appState.settingsChanged()
+                        } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(.secondary)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    .padding(.vertical, 2)
+                }
+            }
+            .padding(10)
+            .background(RoundedRectangle(cornerRadius: 12).fill(.quaternary.opacity(0.35)))
+        }
+    }
+}
+
+private struct NookItemRow: View {
+    let symbol: String
+    let title: String
+    let caption: String
+    let isOn: Bool
+    let onToggle: (Bool) -> Void
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: symbol)
+                .frame(width: 18)
                 .foregroundStyle(.secondary)
-            Text("Media controls")
-                .font(.headline)
-            Text("Nook's own ⏯ item — click to play/pause, right-click for tracks. Lives in any section, unlike the system Now Playing.")
+            Text(title)
+                .font(.callout)
+            Text(caption)
                 .font(.caption)
                 .foregroundStyle(.tertiary)
             Spacer()
-            Toggle("", isOn: Binding(
-                get: { appState.settings.showMediaControls },
-                set: { enabled in
-                    appState.settings.showMediaControls = enabled
-                    appState.settingsChanged()
-                }
-            ))
-            .toggleStyle(.switch)
-            .controlSize(.small)
-            .labelsHidden()
+            Toggle("", isOn: Binding(get: { isOn }, set: onToggle))
+                .toggleStyle(.switch)
+                .controlSize(.mini)
+                .labelsHidden()
         }
+        .padding(.vertical, 2)
     }
 }
 

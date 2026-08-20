@@ -11,9 +11,16 @@ import NookCore
 enum ItemImageCache {
     private static var appIcons: [String: NSImage] = [:]
 
+    private static var nookItemSymbols: [String: String] = [:]
+
+    /// ExtrasManager registers each Nook item's SF Symbol by item title.
+    static func registerNookItem(title: String, symbol: String) {
+        nookItemSymbols[title] = symbol
+    }
+
     static func icon(for item: ItemID) -> NSImage? {
-        if item.rawValue.hasSuffix("Nook.MediaControls") {
-            return NSImage(systemSymbolName: "playpause.fill", accessibilityDescription: "Media Controls")
+        if let symbol = nookItemSymbols.first(where: { item.rawValue.hasSuffix($0.key) })?.value {
+            return NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         }
         if let bundleID = item.bundleID {
             if bundleID == ItemEnumeratorBundle.agent {

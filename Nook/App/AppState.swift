@@ -30,7 +30,7 @@ final class AppState {
     private var rehideTimer: Timer?
     private var statusItem: NookStatusItem?
     private var separators: SeparatorManager?
-    private var mediaControls: MediaControlsItem?
+    private var extras: ExtrasManager?
     private var bandMonitor: MenuBarBandMonitor?
     private var hotkey: HotkeyManager?
     private var eventTask: Task<Void, Never>?
@@ -61,7 +61,14 @@ final class AppState {
         }
         separators = SeparatorManager(appState: self)
         separators?.sync(with: settings.separators)
-        syncMediaControls()
+        // Migration: early builds had a bare media-controls bool.
+        if settings.showMediaControls, !settings.extraItems.contains(where: { $0.kind == .mediaControls }) {
+            settings.extraItems.append(ExtraItemSpec(kind: .mediaControls))
+            settings.showMediaControls = false
+            settings.save()
+        }
+        extras = ExtrasManager(appState: self)
+        extras?.sync(with: settings.extraItems)
 
         let bandMonitor = MenuBarBandMonitor(appState: self)
         bandMonitor.start()
@@ -156,7 +163,7 @@ final class AppState {
         }
         hotkey?.register(settings.hotkey)
         separators?.sync(with: settings.separators)
-        syncMediaControls()
+        extras?.sync(with: settings.extraItems)
         Task {
             await engine.setSteadyExtras(settings.hideSystemExtras)
             await engine.setModel(settings.sectionModel)
@@ -317,16 +324,17 @@ final class AppState {
             }
             byID[id] = ObservedItem(id: id, frame: nil, appName: appName)
         }
-        // Nook's media item is section-manageable (visibility-based hiding);
-        // when hidden it's absent from AX, so ensure it's represented.
-        if settings.showMediaControls, byID[MediaControlsItem.itemID] == nil {
-            byID[MediaControlsItem.itemID] = ObservedItem(
-                id: MediaControlsItem.itemID, frame: nil, appName: "Media"
-            )
+        // Nook's extras are section-manageable (visibility-based hiding); when
+        // hidden they're absent from AX, so ensure they're represented.
+        for spec in settings.extraItems {
+            let id = ExtrasManager.itemID(for: spec)
+            if byID[id] == nil {
+                byID[id] = ObservedItem(id: id, frame: nil, appName: spec.shortcutName ?? nil)
+            }
         }
         let all = byID.values.filter {
             !$0.id.isSystemModule
-                && ($0.id.bundleID != Bundle.main.bundleIdentifier || $0.id == MediaControlsItem.itemID)
+                && ($0.id.bundleID != Bundle.main.bundleIdentifier || Self.isNookExtraID($0.id))
                 && $0.id.bundleID?.hasPrefix("com.apple.") != true
                 && settings.sectionModel.section(of: $0.id) == section
         }
@@ -353,8 +361,19 @@ final class AppState {
 
     // MARK: - Effects
 
-    /// Nook-owned items (media controls) hide by their OWN visibility, not the
-    /// assertion — asserting away Nook's bundle would take the chevron too.
+    /// True for Nook-owned proxy/extra items (NOT the chevron or separators):
+    /// they're section-manageable through their own visibility.
+    static func isNookExtraID(_ id: ItemID) -> Bool {
+        let raw = id.rawValue
+        return raw.contains("::Nook.")
+            && !raw.contains("Nook.StatusItem")
+            && !raw.contains("Nook.Separator")
+    }
+
+    /// Nook-owned items hide by their OWN visibility, not the assertion —
+    /// asserting away Nook's bundle would take the chevron too.
+    var revealedSectionsForExtras: Set<NookCore.Section> { currentRevealedSections }
+
     private var currentRevealedSections: Set<NookCore.Section> {
         switch rehide.state {
         case .revealed(let sections, _):
@@ -368,22 +387,10 @@ final class AppState {
         }
     }
 
-    private func syncMediaControls() {
-        if settings.showMediaControls {
-            if mediaControls == nil {
-                mediaControls = MediaControlsItem(appState: self)
-            }
-        } else {
-            mediaControls?.remove()
-            mediaControls = nil
-        }
-        mediaControls?.apply(model: settings.sectionModel, revealed: currentRevealedSections)
-    }
-
     private func dispatch(_ effects: [RehideEffect]) {
         defer {
             statusItem?.updateSymbol(revealed: isRevealed)
-            mediaControls?.apply(model: settings.sectionModel, revealed: currentRevealedSections)
+            extras?.apply(model: settings.sectionModel, revealed: currentRevealedSections)
         }
         for effect in effects {
             switch effect {
@@ -496,7 +503,7 @@ final class AppState {
         var changed = false
         for item in snap.items {
             guard let bundle = item.id.bundleID,
-                  bundle != nookBundle || item.id == MediaControlsItem.itemID,
+                  bundle != nookBundle || Self.isNookExtraID(item.id),
                   !bundle.hasPrefix("com.apple."),
                   let frame = item.frame
             else { continue }

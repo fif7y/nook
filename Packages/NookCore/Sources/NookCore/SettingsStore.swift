@@ -72,6 +72,40 @@ public struct SeparatorSpec: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+public enum ExtraKind: String, Codable, CaseIterable, Sendable {
+    case mediaControls
+    case cameraMicIndicator
+    case airdrop
+    case shortcut
+}
+
+public struct ExtraItemSpec: Codable, Equatable, Identifiable, Sendable {
+    public var id: UUID
+    public var kind: ExtraKind
+    /// Shortcuts-app shortcut name (kind == .shortcut).
+    public var shortcutName: String?
+    /// SF Symbol for shortcut items.
+    public var symbol: String?
+
+    public init(id: UUID = UUID(), kind: ExtraKind, shortcutName: String? = nil, symbol: String? = nil) {
+        self.id = id
+        self.kind = kind
+        self.shortcutName = shortcutName
+        self.symbol = symbol
+    }
+
+    /// Stable ItemID title. Singleton kinds keep fixed titles (section
+    /// assignments survive re-toggling); shortcut items key by UUID.
+    public var itemTitle: String {
+        switch kind {
+        case .mediaControls: "Nook.MediaControls"
+        case .cameraMicIndicator: "Nook.CameraMic"
+        case .airdrop: "Nook.AirDrop"
+        case .shortcut: "Nook.Shortcut.\(id.uuidString)"
+        }
+    }
+}
+
 public struct SettingsStore: Codable, Equatable, Sendable {
     public var onboardingCompleted: Bool = false
     public var launchAtLogin: Bool = false
@@ -89,8 +123,12 @@ public struct SettingsStore: Codable, Equatable, Sendable {
     public var hideSystemExtras: Bool = true
 
     /// Nook's own media-controls item (play/pause/next/prev via media keys).
-    /// Unlike the system Now Playing extra, it's section-manageable.
+    /// Superseded by `extraItems`; kept for migration of early builds.
     public var showMediaControls: Bool = false
+
+    /// Nook-owned proxy items ("Nook items"): section-manageable replacements
+    /// for the collateral-hidden system extras, plus user shortcut buttons.
+    public var extraItems: [ExtraItemSpec] = []
 
     public var sectionModel = SectionModel()
     public var separators: [SeparatorSpec] = []
@@ -118,7 +156,7 @@ public struct SettingsStore: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case onboardingCompleted, launchAtLogin, showStatusItem, hotkey
         case revealTriggers, autoRehide, rehideDelay, rehideOnClickElsewhere
-        case hideSystemExtras, showMediaControls, sectionModel, separators
+        case hideSystemExtras, showMediaControls, extraItems, sectionModel, separators
         case displayTemplate, displayOverrides
     }
 
@@ -135,6 +173,7 @@ public struct SettingsStore: Codable, Equatable, Sendable {
         rehideOnClickElsewhere = try c.decodeIfPresent(Bool.self, forKey: .rehideOnClickElsewhere) ?? defaults.rehideOnClickElsewhere
         hideSystemExtras = try c.decodeIfPresent(Bool.self, forKey: .hideSystemExtras) ?? defaults.hideSystemExtras
         showMediaControls = try c.decodeIfPresent(Bool.self, forKey: .showMediaControls) ?? defaults.showMediaControls
+        extraItems = try c.decodeIfPresent([ExtraItemSpec].self, forKey: .extraItems) ?? defaults.extraItems
         sectionModel = try c.decodeIfPresent(SectionModel.self, forKey: .sectionModel) ?? defaults.sectionModel
         separators = try c.decodeIfPresent([SeparatorSpec].self, forKey: .separators) ?? defaults.separators
         displayTemplate = try c.decodeIfPresent(DisplayBehavior.self, forKey: .displayTemplate) ?? defaults.displayTemplate
