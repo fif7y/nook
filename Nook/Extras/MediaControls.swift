@@ -128,22 +128,32 @@ final class ExtrasManager {
     private func setVisible(_ visible: Bool, for id: UUID, item: NSStatusItem) {
         guard lastVisible[id] != visible else { return }
         lastVisible[id] = visible
-        // Snap, don't stage: this runs as the engine's reflow companion — the
-        // width change lands in the SAME agent reflow as the assertion swap,
-        // so the agent's own animation carries these items exactly like the
-        // assertion-hidden ones. Any staged fade of our own runs on a second
-        // clock and reads as sliding.
+        // Runs as the engine's reflow companion, so timing coincides with the
+        // assertion swap. The glyph FADES like the agent fades its items —
+        // safe now that sections are physically contiguous (the late gap-close
+        // only displaces neighbors that are themselves invisible mid-swap; an
+        // instant snap read as an unanimated pop).
         if visible {
             item.isVisible = true
             item.length = NSStatusItem.squareLength
-            item.button?.alphaValue = 1
-        } else {
-            item.length = 0
-            item.button?.alphaValue = 0
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
-                guard let self, self.lastVisible[id] == false else { return }
-                self.items[id]?.isVisible = false
+            NSAnimationContext.runAnimationGroup { ctx in
+                ctx.duration = 0.22
+                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
+                item.button?.animator().alphaValue = 1
             }
+        } else {
+            NSAnimationContext.runAnimationGroup({ ctx in
+                ctx.duration = 0.18
+                ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
+                item.button?.animator().alphaValue = 0
+            }, completionHandler: { [weak self] in
+                guard let self, self.lastVisible[id] == false else { return }
+                self.items[id]?.length = 0
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+                    guard let self, self.lastVisible[id] == false else { return }
+                    self.items[id]?.isVisible = false
+                }
+            })
         }
     }
 
