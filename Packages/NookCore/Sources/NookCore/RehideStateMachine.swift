@@ -185,6 +185,14 @@ public struct RehideStateMachine: Equatable, Sendable {
     }
 
     private func armIfNeeded(now: Date) -> [RehideEffect] {
-        policy.autoRehide ? [.armTimer(now.addingTimeInterval(policy.delay))] : [.none]
+        // Floor the settle-time arm: with the rehide delay dialed to 0, a
+        // reveal whose pointer isn't parked in the band concealed within
+        // milliseconds of settling — an unreadable open-shut flash (hotkey
+        // reveals especially). Pointer-driven rehide stays instant via
+        // `.pointerLeft`; only the "never entered the band" case gets a
+        // minimum readable window.
+        policy.autoRehide
+            ? [.armTimer(now.addingTimeInterval(max(policy.delay, 0.75)))]
+            : [.none]
     }
 }

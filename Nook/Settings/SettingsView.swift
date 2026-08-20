@@ -233,9 +233,8 @@ private struct GeneralPane: View {
                 SettingSliderRow(
                     title: "Hover delay",
                     value: binding(\.revealTriggers.hoverDelay),
-                    range: 0...0.5,
-                    format: "%.1fs",
-                    zeroLabel: "Instant"
+                    range: 0.15...0.75,
+                    format: "%.2fs"
                 )
             }
             SettingToggleRow(title: "Reveal on click in empty menu bar area", isOn: binding(\.revealTriggers.clickEnabled))

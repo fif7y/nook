@@ -149,11 +149,10 @@ final class ExtrasManager {
             item.length = NSStatusItem.squareLength
             item.button?.alphaValue = 0
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-                guard let self, self.lastVisible[id] == true else { return }
-                NSAnimationContext.runAnimationGroup { ctx in
-                    ctx.duration = 0.22
-                    ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
-                    self.items[id]?.button?.animator().alphaValue = 1
+                guard let self, self.lastVisible[id] == true,
+                      let button = self.items[id]?.button else { return }
+                AlphaFade.run(button, to: 1, duration: 0.22, controlPoints: (0.16, 1, 0.3, 1)) {
+                    button.alphaValue = 1  // re-sync the view property
                 }
             }
         } else {
@@ -185,6 +184,7 @@ final class ExtrasManager {
     /// Snapshot the button and fade the snapshot at its old screen position.
     private func showFadingGhost(for item: NSStatusItem) {
         guard
+            !ConcealGhostOverlay.stripActive,  // the strip already shows this glyph
             let button = item.button,
             let buttonWindow = button.window,
             let rep = button.bitmapImageRepForCachingDisplay(in: button.bounds)
@@ -207,16 +207,16 @@ final class ExtrasManager {
         ghost.hasShadow = false
         let imageView = NSImageView(image: image)
         imageView.frame = NSRect(origin: .zero, size: screenRect.size)
+        imageView.wantsLayer = true
         ghost.contentView = imageView
         ghost.orderFrontRegardless()
 
-        NSAnimationContext.runAnimationGroup({ ctx in
-            ctx.duration = 0.22
-            ctx.timingFunction = CAMediaTimingFunction(controlPoints: 0.16, 1, 0.3, 1)
-            ghost.animator().alphaValue = 0
-        }, completionHandler: {
+        // Ease-IN for the fade-out (hold, then accelerate away) — the show
+        // curve's ease-out dumped the alpha in the first frames and the hide
+        // read as a pop.
+        AlphaFade.run(imageView, to: 0, duration: 0.3, controlPoints: (0.55, 0, 0.8, 0.4)) {
             ghost.orderOut(nil)
-        })
+        }
     }
 
     // MARK: Item construction

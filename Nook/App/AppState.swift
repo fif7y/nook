@@ -62,6 +62,7 @@ final class AppState {
         if settings.showStatusItem {
             statusItem = NookStatusItem(appState: self)
         }
+        ConcealGhostOverlay.prewarmDisplay()
         separators = SeparatorManager(appState: self)
         separators?.sync(with: settings.separators)
         // Migration: early builds had a bare media-controls bool.
@@ -141,10 +142,12 @@ final class AppState {
     }
 
     func concealNow() {
+        NookLog.log("concealNow state=\(rehide.state)")
         dispatch(rehide.handle(.concealRequested))
     }
 
     func rehideTriggered(_ trigger: RehideTrigger) {
+        NookLog.log("rehideTrigger(\(trigger)) state=\(rehide.state)")
         dispatch(rehide.handle(.trigger(trigger)))
     }
 
@@ -159,6 +162,50 @@ final class AppState {
     var isRevealed: Bool {
         if case .revealed = rehide.state { return true }
         return false
+    }
+
+    /// Revealed OR heading there — what the chevron should show.
+    private var isRevealedOrRevealing: Bool {
+        switch rehide.state {
+        case .revealed: return true
+        case .transitioning(_, queued: .reveal): return true
+        case .transitioning(target: .reveal, queued: nil): return true
+        default: return false
+        }
+    }
+
+    /// Union of the on-screen frames about to conceal (main-display band
+    /// only): everything assigned to a non-visible section that currently has
+    /// a frame. Nil when nothing concealable is showing. Re-snapshots: AX
+    /// lists freshly revealed items progressively, and the settle-time
+    /// snapshot can be missing half the strip.
+    private func concealStripFrames() async -> CGRect? {
+        let snap = await engine.snapshot()
+        var union: CGRect?
+        var count = 0
+        for item in snap.items {
+            guard let frame = item.frame,
+                  frame.minY > -5, frame.minY < 50,
+                  settings.sectionModel.section(of: item.id) != .visible
+            else { continue }
+            count += 1
+            union = union.map { $0.union(frame) } ?? frame
+        }
+        NookLog.log("strip: \(count) items → \(union.map { "\(Int($0.minX))..\(Int($0.maxX))" } ?? "nil")")
+        return union
+    }
+
+    /// Post-settle catch-up: re-run the companion apply so anything that
+    /// changed DURING the transition (media presence, camera pill, a converge
+    /// that no-opped and never fired the companion) lands now. lastVisible
+    /// guards make this a no-op when the companion already got it right.
+    private func settleCatchUp() {
+        extras?.apply(
+            model: settings.sectionModel,
+            revealed: currentRevealedSections,
+            systemCameraPillVisible: systemCameraPillVisible
+        )
+        separators?.apply(model: settings.sectionModel, revealed: currentRevealedSections)
     }
 
     func openSettings() {
@@ -576,7 +623,9 @@ final class AppState {
         // Extras are NOT applied here: the engine's reflow companion applies
         // them inside the converge so their size change shares the assertion
         // swap's reflow. Applying pre-reflow here put them on a second clock.
-        defer { statusItem?.updateSymbol(revealed: isRevealed) }
+        // The chevron flips at transition START — settle-time flips read as an
+        // unacknowledged click.
+        defer { statusItem?.updateSymbol(revealed: isRevealedOrRevealing) }
         for effect in effects {
             switch effect {
             case .none:
@@ -599,15 +648,32 @@ final class AppState {
                         await ItemImageCache.prewarmBarCaptures(items: settled.items)
                     }
                     dispatch(rehide.handle(.transitionSettled))
+                    settleCatchUp()
+                    // Swipe-through hover: the pointer can be long gone by the
+                    // time the reveal settles — armIfNeeded gave the FULL delay.
+                    // Re-arm as a pointer-out so an accidental hover self-heals
+                    // on the short clock. HOVER ONLY: deliberate reveals (click,
+                    // hotkey) with the pointer elsewhere must keep the floor,
+                    // not conceal instantly at rehideDelay 0.
+                    if case .revealed(_, .hover) = rehide.state,
+                       bandMonitor?.pointerCurrentlyInBand == false {
+                        pointerLeftBand()
+                    }
                 }
             case .conceal:
                 Task {
+                    // Cover the strip BEFORE the swap: the agent pops
+                    // concealed items with no animation, so the overlay is
+                    // the hide animation. Fades once the swap has landed.
+                    let ghost = await ConcealGhostOverlay.begin(over: await concealStripFrames())
                     NookLog.log("effect conceal → engine")
                     await engine.conceal()
                     snapshot = await engine.snapshot()
+                    ghost?.fadeOut()
                     NookLog.log("effect conceal settled")
                     lastSettleAt = Date()
                     dispatch(rehide.handle(.transitionSettled))
+                    settleCatchUp()
                 }
             case .armTimer(let deadline):
                 scheduleRehideTimer(at: deadline)
@@ -740,7 +806,12 @@ final class AppState {
                 await engine.setModel(settings.sectionModel)
                 snapshot = await engine.snapshot()
                 // The system camera pill appearing/vanishing is an
-                // itemsChanged — Nook's indicator defers to it live.
+                // itemsChanged — Nook's indicator defers to it live. But NOT
+                // mid-transition: every reveal/conceal fires itemsChanged
+                // (concealed items drop out of AX), and applying here would
+                // animate extras on a second clock. The settle catch-up in
+                // dispatch covers the transition case.
+                guard !isTransitioning else { return }
                 extras?.apply(model: settings.sectionModel, revealed: currentRevealedSections, systemCameraPillVisible: systemCameraPillVisible)
                 separators?.apply(model: settings.sectionModel, revealed: currentRevealedSections)
             }

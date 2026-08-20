@@ -93,15 +93,23 @@ final class MenuBarBandMonitor {
         let displayUUID = screen.flatMap(displayUUIDString)
 
         // Per-display behavior: crossing onto an "always show all" display
-        // reveals; crossing back to a "collapse" display re-conceals.
+        // reveals; crossing back to a "collapse" display arms the countdown.
+        // (An instant conceal here flashed the bar open-shut when the pointer
+        // crossed displays right after a hover reveal — rehide, don't snap.)
         if displayUUID != lastDisplayUUID {
+            // First sighting (nil at launch) is a baseline, not a crossing —
+            // treating it as one concealed the bar on the first mouse move
+            // after a reveal.
+            let crossed = lastDisplayUUID != nil
             lastDisplayUUID = displayUUID
-            switch appState.settings.behavior(forDisplayUUID: displayUUID) {
-            case .alwaysShowAll:
-                appState.reveal([.hidden], reason: .hover)
-            case .collapse:
-                if appState.isRevealed {
-                    appState.rehideTriggered(.displayBehaviorChanged)
+            if crossed {
+                switch appState.settings.behavior(forDisplayUUID: displayUUID) {
+                case .alwaysShowAll:
+                    appState.reveal([.hidden], reason: .hover)
+                case .collapse:
+                    if appState.isRevealed {
+                        appState.pointerLeftBand()
+                    }
                 }
             }
         }
@@ -112,11 +120,20 @@ final class MenuBarBandMonitor {
             pointerInBand = true
             appState.pointerReturnedToBand()
             if appState.settings.revealTriggers.hoverEnabled, !appState.isRevealed {
-                let delay = appState.settings.revealTriggers.hoverDelay
+                // Floor: below ~150ms every swipe-through of the band reads as
+                // a hover and the bar flaps open on the way to a hot corner.
+                let delay = max(appState.settings.revealTriggers.hoverDelay, 0.15)
                 hoverTimer?.invalidate()
                 hoverTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { _ in
                     Task { @MainActor [weak self] in
-                        guard let appState = self?.appState, self?.pointerInBand == true else { return }
+                        guard let self, let appState = self.appState, self.pointerInBand else { return }
+                        // Re-verify against the LIVE pointer, not just the
+                        // tracked flag — the flag lags by one event-delivery
+                        // latency, which is exactly a fast swipe-through. A
+                        // graze must not open the bar.
+                        let location = NSEvent.mouseLocation
+                        let screen = NSScreen.screens.first { NSMouseInRect(location, $0.frame, false) }
+                        guard let screen, self.isInMenuBarBand(location, of: screen) else { return }
                         appState.reveal([.hidden], reason: .hover)
                     }
                 }
@@ -173,7 +190,9 @@ final class MenuBarBandMonitor {
         return false
     }
 
-    private var pendingSingleClick: DispatchWorkItem?
+    /// Pointer state for the settle catch-up: a reveal that outlives its hover
+    /// re-arms on the short clock.
+    var pointerCurrentlyInBand: Bool { pointerInBand }
 
     private func clicked(_ event: NSEvent) {
         guard let appState else { return }
@@ -192,22 +211,16 @@ final class MenuBarBandMonitor {
             guard appState.settings.revealTriggers.clickEnabled else { return }
             NookLog.log("band: empty-area click count=\(event.clickCount)")
             if event.clickCount >= 2 {
-                // Second click of a double: cancel the deferred single action.
-                pendingSingleClick?.cancel()
-                pendingSingleClick = nil
+                // Second click of a double. With the feature off, ignore it —
+                // acting again reads as an open-shut flash.
                 if appState.settings.revealTriggers.doubleClickForAlwaysHidden {
                     appState.reveal([.hidden, .alwaysHidden], reason: .doubleClick)
                 }
-            } else if appState.settings.revealTriggers.doubleClickForAlwaysHidden {
-                // Defer the single-click toggle long enough for a potential
-                // second click — otherwise double-click can never fire.
-                pendingSingleClick?.cancel()
-                let work = DispatchWorkItem { [weak appState] in
-                    appState?.toggle(reason: .click)
-                }
-                pendingSingleClick = work
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3, execute: work)
             } else {
+                // Single click acts IMMEDIATELY — the old 300ms double-click
+                // defer made every plain click feel dead. A double's second
+                // click widens the reveal on top (revealRequested unions), so
+                // no defer is needed to keep double-click working.
                 appState.toggle(reason: .click)
             }
         } else if appState.isRevealed {

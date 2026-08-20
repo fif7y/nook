@@ -297,36 +297,42 @@ public actor EngineGoldenGate: MenuBarEngine {
             guard let bundle = id.bundleID else { return false }
             return concealable.contains(bundle)
         })
-        // Verify-after-apply: poll until the concealed bundles actually drop
-        // out of the AX tree (reflow propagation is not instant), bounded.
-        // Nothing to verify on a reveal/extras-only converge — keep it snappy.
-        if !concealable.isEmpty {
-            let verifyDeadline = Date().addingTimeInterval(3)
-            while Date() < verifyDeadline {
-                try? await Task.sleep(for: .milliseconds(100))
-                let check = await refreshSnapshot()
-                let stillVisible = check.items.contains { item in
-                    guard let bundle = item.id.bundleID else { return false }
-                    return concealable.contains(bundle)
-                }
-                if !stillVisible { break }
-            }
-        }
+        // Stamp the concealed set NOW — observers must union it from the
+        // moment the swap is issued. The slow part (polling AX until the
+        // concealed bundles actually drop out) moves OFF the critical path:
+        // holding converge (and therefore the settle report) hostage to up to
+        // 3s of verify polling made every queued transition — hover right
+        // after a conceal, rapid toggles — wait a visible beat before moving.
         let after = await refreshSnapshot()
-        let stillVisible = after.items.contains { item in
-            guard let bundle = item.id.bundleID else { return false }
-            return concealable.contains(bundle)
-        }
-        if stillVisible {
-            NookLog.log("converge: STILL VISIBLE after verify window")
-            eventContinuation.yield(.convergeFailed("concealed items still visible after verify window"))
-        }
         lastSnapshot = EngineSnapshot(
             items: after.items,
             concealed: concealed,
             nativeOverflowActive: after.nativeOverflowActive,
             takenAt: after.takenAt
         )
+        if !concealable.isEmpty {
+            Task { await self.verifyConcealment(of: concealable) }
+        }
+    }
+
+    /// Background verify-after-apply: bounded poll until the concealed
+    /// bundles drop out of the AX tree. Bails silently when a newer converge
+    /// has superseded this one — that converge owns the state now.
+    private func verifyConcealment(of concealable: Set<String>) async {
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            try? await Task.sleep(for: .milliseconds(150))
+            guard activeConcealable == concealable else { return }
+            let check = await refreshSnapshot()
+            let stillVisible = check.items.contains { item in
+                guard let bundle = item.id.bundleID else { return false }
+                return concealable.contains(bundle)
+            }
+            if !stillVisible { return }
+        }
+        guard activeConcealable == concealable else { return }
+        NookLog.log("converge: STILL VISIBLE after verify window")
+        eventContinuation.yield(.convergeFailed("concealed items still visible after verify window"))
     }
 
     /// Thread-safe one-shot result for the assertion completion (delivered on
