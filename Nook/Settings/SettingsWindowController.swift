@@ -13,6 +13,9 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
 
     func show(appState: AppState) {
         self.appState = appState
+        // Always land on General: opening straight onto the Menu Bar tab
+        // triggers its full-reveal preview before the user asked for it.
+        appState.settingsTab = .general
         if let window {
             window.makeKeyAndOrderFront(nil)
             NSApp.activate()

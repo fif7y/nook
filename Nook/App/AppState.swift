@@ -14,6 +14,10 @@ final class AppState {
     private(set) var snapshot: EngineSnapshot?
     private(set) var accessibilityGranted = AXIsProcessTrusted()
     private(set) var engineCanHide = true
+    /// Settings window tab. Owned here (not view @State) so every window
+    /// open can reset it to General — reopening straight onto the Menu Bar
+    /// tab fired its full-reveal preview unprompted.
+    var settingsTab: SettingsTab = .general
     /// While the settings window is open, auto-rehide is fully suppressed —
     /// the user is mid-workflow between the editor and the bar, and nothing
     /// should collapse under them. Closing the window re-conceals.

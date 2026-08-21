@@ -33,11 +33,21 @@ enum SettingsTab: String, CaseIterable, Identifiable {
 
 struct SettingsView: View {
     @Environment(AppState.self) private var appState
-    @State private var tab: SettingsTab = .general
+
+    // Selection lives on AppState so the window controller can reset it to
+    // General on every open — the hosting view survives window close, and a
+    // window reopening straight onto the Menu Bar tab fired its full-reveal
+    // preview before the user asked for anything.
+    private var tab: Binding<SettingsTab> {
+        Binding(
+            get: { appState.settingsTab },
+            set: { appState.settingsTab = $0 }
+        )
+    }
 
     var body: some View {
         HStack(spacing: 0) {
-            SettingsSidebar(tab: $tab)
+            SettingsSidebar(tab: tab)
             content
         }
         .frame(minWidth: 720, minHeight: 520)
@@ -48,10 +58,10 @@ struct SettingsView: View {
     private var content: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
-                Text(tab.rawValue)
+                Text(appState.settingsTab.rawValue)
                     .font(.system(size: 22, weight: .semibold))
                     .padding(.bottom, 2)
-                switch tab {
+                switch appState.settingsTab {
                 case .general: GeneralPane()
                 case .menuBar: MenuBarTab()
                 case .displays: DisplaysPane()
