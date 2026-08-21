@@ -433,8 +433,20 @@ final class AppState {
             // modes. One brief bar rebuild, and every item (not just the
             // newcomer) lands on its model slot.
             NookLog.log("place: applying full bar order for \(ready.count) queued newcomer(s)")
-            await engine.applyOrder()
+            let written = Set(await engine.applyOrder())
             snapshot = await engine.snapshot()
+            // The restart can re-mint a newcomer's tag (title timing at agent
+            // boot) — a brand-new tag had no slot in the write and the agent
+            // parks it far left. One follow-up pass writes the fresh tags.
+            let reMinted = (snapshot?.items ?? []).contains { item in
+                ready.contains { $0.sectionKey == item.id.sectionKey }
+                    && !written.contains(item.id.rawValue)
+            }
+            if reMinted {
+                NookLog.log("place: newcomer tag re-minted after restart — second order pass")
+                await engine.applyOrder()
+                snapshot = await engine.snapshot()
+            }
             // Positions changed wholesale — stale glyph crops would wear
             // their old neighbor's icon.
             captureStableBarGlyphs()

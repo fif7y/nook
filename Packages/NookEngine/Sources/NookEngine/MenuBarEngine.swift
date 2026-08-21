@@ -84,7 +84,8 @@ public protocol MenuBarEngine: Actor {
     /// Conceal everything the model says is non-visible.
     func conceal() async
     /// Apply the model's per-section order to the real menubar.
-    func applyOrder() async
+    @discardableResult
+    func applyOrder() async -> [String]
     /// Click a (possibly concealed) item without changing reveal state.
     func click(_ item: ItemID, rightClick: Bool) async -> Bool
 }

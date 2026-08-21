@@ -157,7 +157,10 @@ public actor EngineGoldenGate: MenuBarEngine {
         await converge()
     }
 
-    public func applyOrder() async {
+    /// Returns the written tags so callers can detect a post-restart re-mint
+    /// (a live tag absent from the written set never got a slot).
+    @discardableResult
+    public func applyOrder() async -> [String] {
         let snapshot = await refreshSnapshot()
         // Desired left-to-right order: model order per section, sections laid
         // out as [alwaysHidden][hidden][visible] (hidden sections collapse
@@ -191,6 +194,7 @@ public actor EngineGoldenGate: MenuBarEngine {
         // The agent takes a moment to come back; settle before re-observing.
         try? await Task.sleep(for: .seconds(1.5))
         _ = await refreshSnapshot()
+        return orderedTags
     }
 
     public func click(_ item: ItemID, rightClick: Bool) async -> Bool {

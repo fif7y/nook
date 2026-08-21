@@ -26,6 +26,18 @@ enum AgentPositionStore {
         var value = gap * Double(orderedTags.count)
         for tag in orderedTags {
             positions[tag] = value
+            // Tag drift: the agent re-mints third-party tags (title timing at
+            // agent boot — Figma's slot was once written to '::Item-0' while
+            // the live item woke up as '::<UUID>' and kept a far-left ghost
+            // slot). Give every known tag variant of the same bundle the same
+            // value so whichever tag survives the restart lands on this slot.
+            let id = ItemID(rawValue: tag)
+            if id.sectionKey != id, let bundle = id.bundleID {
+                let prefix = "status:\(bundle)::"
+                for key in positions.keys where key.hasPrefix(prefix) && key != tag {
+                    positions[key] = value
+                }
+            }
             value -= gap
         }
         CFPreferencesSetValue(
