@@ -129,10 +129,13 @@ final class AppState {
             }
             await engine.setSteadyExtras(settings.hideSystemExtras)
             // Apps that first appeared while Nook wasn't running route to the
-            // new-items section before the first converge.
+            // new-items section before the first converge. Only VISIBLE
+            // newcomers get a placement drag (they must cross the chevron);
+            // hidden/always-hidden ones conceal right where they spawned —
+            // the far left, which is also where the model orders them.
             let launchNewItems = registerNewItems(from: await engine.snapshot())
-            for id in launchNewItems {
-                await physicallyPlace(id, in: settings.sectionModel.section(of: id))
+            for id in launchNewItems where settings.sectionModel.section(of: id) == .visible {
+                await physicallyPlace(id, in: .visible)
             }
             await engine.setModel(settings.sectionModel)
             snapshot = await engine.snapshot()
@@ -1024,11 +1027,14 @@ final class AppState {
             // allowlist) takes effect.
             Task {
                 let newItems = registerNewItems(from: await engine.snapshot())
-                // Slot new icons on the model's side of the chevron while
-                // they still have live frames — after the converge a routed
-                // (concealed) item can't be measured or dragged.
-                for id in newItems {
-                    await physicallyPlace(id, in: settings.sectionModel.section(of: id))
+                // Only VISIBLE newcomers need a placement drag (across the
+                // chevron), and it must happen while they still have live
+                // frames — after the converge a concealed item can't be
+                // measured or dragged. Hidden/always-hidden newcomers stay
+                // where macOS spawned them: the far left, matching their
+                // order-front slot in the model.
+                for id in newItems where settings.sectionModel.section(of: id) == .visible {
+                    await physicallyPlace(id, in: .visible)
                 }
                 await engine.setModel(settings.sectionModel)
                 snapshot = await engine.snapshot()
