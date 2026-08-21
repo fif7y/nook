@@ -19,6 +19,9 @@ public struct ItemID: RawRepresentable, Hashable, Codable, Sendable {
     /// Owning bundle identifier for `status:` items; nil for system modules.
     /// Hiding granularity is per-bundle, so grouping keys off this.
     public var bundleID: String? {
+        if rawValue.hasPrefix("bundle:") {
+            return String(rawValue.dropFirst("bundle:".count))
+        }
         guard rawValue.hasPrefix("status:") else { return nil }
         let stripped = rawValue.dropFirst("status:".count)
         guard let separator = stripped.range(of: "::") else { return nil }
@@ -27,6 +30,20 @@ public struct ItemID: RawRepresentable, Hashable, Codable, Sendable {
 
     public var isSystemModule: Bool {
         rawValue.hasPrefix("module:")
+    }
+
+    /// The identity the MODEL keys on. Third-party items collapse to their
+    /// bundle (`bundle:<id>`): AX titles are volatile ("Item-0" fallback under
+    /// load, dynamic titles), every flap minted a fresh identity, and stale
+    /// twins polluted assignments/order/editor alike — while hiding is
+    /// per-bundle anyway. Nook's own items (stable Nook-chosen titles) and
+    /// Apple/system items (stable agent identifiers) keep full identity.
+    public var sectionKey: ItemID {
+        guard let bundle = bundleID,
+              bundle != "app.fif7y.Nook",
+              !bundle.hasPrefix("com.apple.")
+        else { return self }
+        return ItemID(rawValue: "bundle:\(bundle)")
     }
 }
 
@@ -89,11 +106,12 @@ public struct SectionModel: Codable, Equatable, Sendable {
         guard !baseline, newItemsDestination != .visible else { return true }
         var routed: [ItemID] = []
         for item in items {
+            let key = item.sectionKey
             guard let bundle = item.bundleID, newBundles.contains(bundle),
-                  assignments[item] == nil
+                  assignments[key] == nil, !routed.contains(key)
             else { continue }
-            assignments[item] = newItemsDestination
-            routed.append(item)
+            assignments[key] = newItemsDestination
+            routed.append(key)
         }
         // Front of the order: macOS spawns new icons at the far LEFT of the
         // status area, so the model mirrors where they physically land.
@@ -102,7 +120,32 @@ public struct SectionModel: Codable, Equatable, Sendable {
     }
 
     public func section(of item: ItemID) -> Section {
-        assignments[item] ?? .visible
+        // Canonical key first; full-ID fallback keeps pre-migration blobs
+        // (and probe tooling) working until canonicalize() rewrites them.
+        assignments[item.sectionKey] ?? assignments[item] ?? .visible
+    }
+
+    /// One-time migration to canonical keys: collapses every title-variant
+    /// twin of a bundle into one `bundle:` entry. Where twins disagree, the
+    /// entry backed by that section's order wins; otherwise first encountered.
+    public mutating func canonicalize() {
+        for (section, list) in order {
+            var seen = Set<ItemID>()
+            order[section] = list.map(\.sectionKey).filter { seen.insert($0).inserted }
+        }
+        var merged: [ItemID: Section] = [:]
+        for (id, section) in assignments where order[section]?.contains(id.sectionKey) == true {
+            merged[id.sectionKey] = section
+        }
+        for (id, section) in assignments where merged[id.sectionKey] == nil {
+            merged[id.sectionKey] = section
+        }
+        assignments = merged
+        // A merged twin leaves its loser's order slot in the wrong section —
+        // an entry only belongs in the section the model now assigns it to.
+        for (home, list) in order {
+            order[home] = list.filter { section(of: $0) == home }
+        }
     }
 
     /// Every bundle ID that must stay visible for a given reveal state.

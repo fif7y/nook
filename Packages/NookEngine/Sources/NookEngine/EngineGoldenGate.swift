@@ -175,8 +175,10 @@ public actor EngineGoldenGate: MenuBarEngine {
                 .filter { model.section(of: $0.id) == section && !$0.id.isSystemModule }
             let explicit = model.order[section] ?? []
             let ranked = sectionItems.sorted { lhs, rhs in
-                let li = explicit.firstIndex(of: lhs.id) ?? Int.max
-                let ri = explicit.firstIndex(of: rhs.id) ?? Int.max
+                // Order arrays hold canonical section keys — rank real items
+                // through the same lens.
+                let li = explicit.firstIndex(of: lhs.id.sectionKey) ?? Int.max
+                let ri = explicit.firstIndex(of: rhs.id.sectionKey) ?? Int.max
                 if li != ri { return li < ri }
                 // Fall back to current on-screen order (agent order).
                 return (lhs.frame?.minX ?? 0) < (rhs.frame?.minX ?? 0)

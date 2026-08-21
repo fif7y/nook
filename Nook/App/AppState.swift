@@ -11,9 +11,7 @@ import SwiftUI
 final class AppState {
     let engine = EngineGoldenGate()
     var settings = SettingsStore.load()
-    private(set) var snapshot: EngineSnapshot? {
-        didSet { healAliasIDs() }
-    }
+    private(set) var snapshot: EngineSnapshot?
     private(set) var accessibilityGranted = AXIsProcessTrusted()
     /// Bumped when the bar-glyph capture cache gains fresh entries —
     /// ItemImageCache is not observable, so editor tiles read this to
@@ -66,6 +64,11 @@ final class AppState {
             settings.save()
         }
         UserDefaults.standard.set(true, forKey: "nook.migratedHoverDelay01")
+
+        // Migrate the model to canonical (bundle-level) keys — collapses any
+        // title-variant twin entries left by older builds.
+        settings.sectionModel.canonicalize()
+        settings.save()
 
         rehide.policy = settings.rehidePolicy
         engineCanHide = engine.capabilities.canHide
@@ -327,21 +330,24 @@ final class AppState {
     /// Updates assignment + explicit order, then physically places the icon
     /// via a synthetic ⌘-drag (no agent restart).
     func moveItem(_ id: ItemID, to section: NookCore.Section, before beforeID: ItemID?) {
+        // The model keys on canonical IDs; `id` arrives as a real bar item
+        // (drag payload) and may be any title-variant of its bundle.
+        let key = id.sectionKey
         var model = settings.sectionModel
         if section == .visible {
-            model.assignments.removeValue(forKey: id)
+            model.assignments.removeValue(forKey: key)
         } else {
-            model.assignments[id] = section
+            model.assignments[key] = section
         }
-        for key in model.order.keys {
-            model.order[key]?.removeAll { $0 == id }
+        for sectionKey in model.order.keys {
+            model.order[sectionKey]?.removeAll { $0 == key }
         }
         var order = model.order[section] ?? currentOrder(in: section)
-        order.removeAll { $0 == id }
-        if let beforeID, let index = order.firstIndex(of: beforeID) {
-            order.insert(id, at: index)
+        order.removeAll { $0 == key }
+        if let beforeKey = beforeID?.sectionKey, let index = order.firstIndex(of: beforeKey) {
+            order.insert(key, at: index)
         } else {
-            order.append(id)
+            order.append(key)
         }
         model.order[section] = order
         settings.sectionModel = model
@@ -502,7 +508,10 @@ final class AppState {
         let globalOrder = editorItems(in: .alwaysHidden)
             + editorItems(in: .hidden)
             + editorItems(in: .visible)
-        let index = globalOrder.firstIndex(where: { $0.id == id }) ?? globalOrder.count
+        // Canonical comparison: the editor's representative for this bundle
+        // may be a different title-variant of the same item.
+        let index = globalOrder.firstIndex(where: { $0.id.sectionKey == id.sectionKey })
+            ?? globalOrder.count
         // Keep the neighbor ITEMS, not just their frames — after the drag the
         // landing is verified against them (x-order), because the lifted-gap
         // assumption is not reliable at cluster boundaries (verified: a
@@ -653,7 +662,8 @@ final class AppState {
     /// The on-screen left-to-right order of a section right now (fallback when
     /// no explicit order exists yet).
     func currentOrder(in section: NookCore.Section) -> [ItemID] {
-        editorItems(in: section).map(\.id)
+        // Order arrays hold canonical keys; tiles carry real item IDs.
+        editorItems(in: section).map(\.id.sectionKey)
     }
 
     /// One-shot physical tidy: reveal everything, then walk the sections
@@ -695,42 +705,9 @@ final class AppState {
         }
     }
 
-    /// MenuBarAgent derives item tags from AX titles, and those drift — the
-    /// same Velja item has been "Item-0" and "Left and right arrows in a
-    /// filled circle" on different days. Hiding is per-bundle, so a bundle is
-    /// never half-live: a stored ID whose bundle HAS live items but which
-    /// isn't itself live is a stale alias of the live one. Remap it so the
-    /// section model (and every write keyed off it) tracks the current tag.
-    private func healAliasIDs() {
-        guard let snap = snapshot else { return }
-        var model = settings.sectionModel
-        let storedIDs = Set(model.assignments.keys).union(model.order.values.joined())
-        let remaps = ItemIdentityResolver.aliasRemaps(
-            storedIDs: storedIDs,
-            liveIDs: snap.items.map(\.id),
-            exemptBundles: EngineGoldenGate.identityExemptBundles
-        )
-        guard !remaps.isEmpty else { return }
-        for (stored, liveID) in remaps {
-            if let section = model.assignments.removeValue(forKey: stored),
-               model.assignments[liveID] == nil {
-                model.assignments[liveID] = section
-            }
-            for key in model.order.keys {
-                guard var order = model.order[key], let index = order.firstIndex(of: stored) else { continue }
-                if order.contains(liveID) {
-                    order.remove(at: index)
-                } else {
-                    order[index] = liveID
-                }
-                model.order[key] = order
-            }
-            NookLog.log("heal: alias \(stored.rawValue) → \(liveID.rawValue)")
-        }
-        settings.sectionModel = model
-        settings.save()
-        Task { await engine.setModel(model) }
-    }
+    // (Alias healing removed: the model keys on ItemID.sectionKey — bundle-
+    // level for third parties — so AX title drift can no longer strand
+    // assignments or order entries under stale tags.)
 
     /// Items the layout editor shows for a section: third-party only (Apple
     /// items are out of scope), Nook's own items excluded, and CONCEALED items
@@ -790,7 +767,7 @@ final class AppState {
         let concealedTwinLoser = ItemIdentityResolver.concealedTwinLosers(
             concealedIDs: byID.values.filter { $0.frame == nil }.map(\.id),
             exemptBundles: EngineGoldenGate.identityExemptBundles,
-            isAssigned: { settings.sectionModel.assignments[$0] != nil }
+            isAssigned: { settings.sectionModel.assignments[$0.sectionKey] != nil }
         )
         let all = byID.values.filter { item in
             if concealedTwinLoser.contains(item.id) { return false }
@@ -812,13 +789,29 @@ final class AppState {
             }
             return true
         }
+        // One tile per canonical identity: title-variant twins collapse. The
+        // representative is the leftmost live-framed item (placement measures
+        // against it), falling back to a concealed stand-in.
+        var byKey: [ItemID: ObservedItem] = [:]
+        for item in all {
+            let key = item.id.sectionKey
+            guard let existing = byKey[key] else {
+                byKey[key] = item
+                continue
+            }
+            switch (existing.frame, item.frame) {
+            case (nil, .some): byKey[key] = item
+            case let (e?, i?) where i.minX < e.minX: byKey[key] = item
+            default: break
+            }
+        }
         let explicit = settings.sectionModel.order[section] ?? []
-        return all.sorted { lhs, rhs in
+        return byKey.values.sorted { lhs, rhs in
             // The user's explicit order is authoritative — nothing outranks it.
             // (A left-pin experiment for extras once did, and it broke drag
-            // ordering and Tidy alike.)
-            let li = explicit.firstIndex(of: lhs.id) ?? Int.max
-            let ri = explicit.firstIndex(of: rhs.id) ?? Int.max
+            // ordering and Tidy alike.) Order arrays hold canonical keys.
+            let li = explicit.firstIndex(of: lhs.id.sectionKey) ?? Int.max
+            let ri = explicit.firstIndex(of: rhs.id.sectionKey) ?? Int.max
             if li != ri { return li < ri }
             return (lhs.frame?.minX ?? .greatestFiniteMagnitude)
                 < (rhs.frame?.minX ?? .greatestFiniteMagnitude)
@@ -1091,9 +1084,9 @@ final class AppState {
             guard !isFirstPass, let previousZone, previousZone != zone else { continue }
             guard zone != current else { continue }
             if zone == .visible {
-                model.assignments.removeValue(forKey: item.id)
+                model.assignments.removeValue(forKey: item.id.sectionKey)
             } else {
-                model.assignments[item.id] = zone
+                model.assignments[item.id.sectionKey] = zone
             }
             NookLog.log("adopt: \(item.id.rawValue) → \(zone)")
             changed = true
@@ -1105,26 +1098,32 @@ final class AppState {
         // hold their slots, entries whose section changed drop out, and
         // newly-adopted members slot in by X. Safe here because adopt only
         // runs on a settled bar — reflows shift frames but preserve X order.
+        // Keyed canonically (leftmost frame wins for multi-item bundles) —
+        // order arrays hold canonical section keys.
         let liveX: [ItemID: CGFloat] = snap.items.reduce(into: [:]) {
-            if let x = $1.frame?.minX { $0[$1.id] = x }
+            guard let x = $1.frame?.minX else { return }
+            let key = $1.id.sectionKey
+            $0[key] = min($0[key] ?? .greatestFiniteMagnitude, x)
         }
         for (section, order) in model.order {
             var newOrder = order.filter { model.section(of: $0) == section }
             let liveSlots = newOrder.indices.filter { liveX[newOrder[$0]] != nil }
             let sortedLive = liveSlots.map { newOrder[$0] }.sorted { liveX[$0]! < liveX[$1]! }
             for (offset, slot) in liveSlots.enumerated() { newOrder[slot] = sortedLive[offset] }
-            let known = Set(newOrder)
+            var known = Set(newOrder)
             let missing = snap.items.filter {
-                $0.frame != nil && !known.contains($0.id)
+                $0.frame != nil && !known.contains($0.id.sectionKey)
                     && model.section(of: $0.id) == section
                     && !$0.id.isSystemModule
                     && $0.id.bundleID?.hasPrefix("com.apple.") != true
                     && ($0.id.bundleID != nookBundle || Self.isNookExtraID($0.id))
             }
-            for item in missing.sorted(by: { liveX[$0.id]! < liveX[$1.id]! }) {
-                let x = liveX[item.id]!
+            for item in missing.sorted(by: { liveX[$0.id.sectionKey]! < liveX[$1.id.sectionKey]! }) {
+                let key = item.id.sectionKey
+                guard known.insert(key).inserted else { continue }
+                let x = liveX[key]!
                 let insertAfter = newOrder.lastIndex { liveX[$0].map { $0 < x } == true }
-                newOrder.insert(item.id, at: insertAfter.map { $0 + 1 } ?? 0)
+                newOrder.insert(key, at: insertAfter.map { $0 + 1 } ?? 0)
             }
             if newOrder != order {
                 model.order[section] = newOrder
