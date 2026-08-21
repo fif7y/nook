@@ -346,10 +346,33 @@ final class CameraMicMonitor {
     private let onChange: () -> Void
     private var audioListenerDevices: [AudioObjectID] = []
     private var cmioListenerDevices: [CMIOObjectID] = []
-    private lazy var propertyListener: (UInt32, UnsafePointer<AudioObjectPropertyAddress>) -> Void =
-        { [weak self] _, _ in DispatchQueue.main.async { self?.deviceStateChanged() } }
-    private lazy var cmioListener: CMIOObjectPropertyListenerBlock =
-        { [weak self] _, _ in DispatchQueue.main.async { self?.deviceStateChanged() } }
+    // C-function-pointer listeners, NOT the *ListenerBlock variants: the HAL
+    // matches removals by block identity, and Swift re-bridges a closure to a
+    // fresh block object on every call — so block removals never matched,
+    // listeners accumulated across reinstalls, and each device event fanned
+    // out into a main-thread reinstall storm (the 2026-08-21 beachball).
+    // Function pointer + clientData compare reliably. Callbacks arrive on a
+    // HAL thread; hop to main before touching state.
+    private static let audioListenerProc: AudioObjectPropertyListenerProc = { _, count, addresses, clientData in
+        guard let clientData else { return noErr }
+        let monitor = Unmanaged<CameraMicMonitor>.fromOpaque(clientData).takeUnretainedValue()
+        let listChanged = UnsafeBufferPointer(start: addresses, count: Int(count))
+            .contains { $0.mSelector == kAudioHardwarePropertyDevices }
+        DispatchQueue.main.async {
+            listChanged ? monitor.deviceListChanged() : monitor.poll()
+        }
+        return noErr
+    }
+    private static let cmioListenerProc: CMIOObjectPropertyListenerProc = { _, count, addresses, clientData in
+        guard let clientData else { return noErr }
+        let monitor = Unmanaged<CameraMicMonitor>.fromOpaque(clientData).takeUnretainedValue()
+        let listChanged = UnsafeBufferPointer(start: addresses, count: Int(count))
+            .contains { $0.mSelector == CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices) }
+        DispatchQueue.main.async {
+            listChanged ? monitor.deviceListChanged() : monitor.poll()
+        }
+        return noErr
+    }
 
     var isActive: Bool { cameraActive || micActive }
 
@@ -381,15 +404,16 @@ final class CameraMicMonitor {
         removeListeners()
     }
 
-    /// A device's running state (or the device list) changed — re-install on
-    /// the latter and re-poll either way.
-    private func deviceStateChanged() {
+    /// Device topology changed (hot-plug) — re-install the per-device
+    /// listeners. Running-state changes skip this and go straight to poll().
+    private func deviceListChanged() {
         removeListeners()
         installListeners()
         poll()
     }
 
     private func installListeners() {
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
         var runningAddress = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -401,11 +425,11 @@ final class CameraMicMonitor {
             mElement: kAudioObjectPropertyElementMain
         )
         // System object: device list changes (hot-plug).
-        AudioObjectAddPropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject), &devicesAddress, .main, propertyListener
+        AudioObjectAddPropertyListener(
+            AudioObjectID(kAudioObjectSystemObject), &devicesAddress, Self.audioListenerProc, selfPtr
         )
         for deviceID in Self.allAudioDeviceIDs() {
-            if AudioObjectAddPropertyListenerBlock(deviceID, &runningAddress, .main, propertyListener) == noErr {
+            if AudioObjectAddPropertyListener(deviceID, &runningAddress, Self.audioListenerProc, selfPtr) == noErr {
                 audioListenerDevices.append(deviceID)
             }
         }
@@ -420,17 +444,18 @@ final class CameraMicMonitor {
             mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
             mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
         )
-        CMIOObjectAddPropertyListenerBlock(
-            CMIOObjectID(kCMIOObjectSystemObject), &cmioDevices, .main, cmioListener
+        CMIOObjectAddPropertyListener(
+            CMIOObjectID(kCMIOObjectSystemObject), &cmioDevices, Self.cmioListenerProc, selfPtr
         )
         for deviceID in Self.allCMIODeviceIDs() {
-            if CMIOObjectAddPropertyListenerBlock(deviceID, &cmioRunning, .main, cmioListener) == noErr {
+            if CMIOObjectAddPropertyListener(deviceID, &cmioRunning, Self.cmioListenerProc, selfPtr) == noErr {
                 cmioListenerDevices.append(deviceID)
             }
         }
     }
 
     private func removeListeners() {
+        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
         var runningAddress = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -441,11 +466,11 @@ final class CameraMicMonitor {
             mScope: kAudioObjectPropertyScopeGlobal,
             mElement: kAudioObjectPropertyElementMain
         )
-        AudioObjectRemovePropertyListenerBlock(
-            AudioObjectID(kAudioObjectSystemObject), &devicesAddress, .main, propertyListener
+        AudioObjectRemovePropertyListener(
+            AudioObjectID(kAudioObjectSystemObject), &devicesAddress, Self.audioListenerProc, selfPtr
         )
         for deviceID in audioListenerDevices {
-            AudioObjectRemovePropertyListenerBlock(deviceID, &runningAddress, .main, propertyListener)
+            AudioObjectRemovePropertyListener(deviceID, &runningAddress, Self.audioListenerProc, selfPtr)
         }
         audioListenerDevices = []
 
@@ -459,11 +484,11 @@ final class CameraMicMonitor {
             mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
             mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
         )
-        CMIOObjectRemovePropertyListenerBlock(
-            CMIOObjectID(kCMIOObjectSystemObject), &cmioDevices, .main, cmioListener
+        CMIOObjectRemovePropertyListener(
+            CMIOObjectID(kCMIOObjectSystemObject), &cmioDevices, Self.cmioListenerProc, selfPtr
         )
         for deviceID in cmioListenerDevices {
-            CMIOObjectRemovePropertyListenerBlock(deviceID, &cmioRunning, .main, cmioListener)
+            CMIOObjectRemovePropertyListener(deviceID, &cmioRunning, Self.cmioListenerProc, selfPtr)
         }
         cmioListenerDevices = []
     }
