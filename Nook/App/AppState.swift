@@ -459,10 +459,18 @@ final class AppState {
                 ? neighborFrame.offsetBy(dx: -frame.width, dy: 0)
                 : neighborFrame
         }
-        let ordered = editorItems(in: section)
-        let index = ordered.firstIndex(where: { $0.id == id }) ?? ordered.count
-        let leftNeighbor = ordered[..<index].reversed().compactMap(\.frame).first.map(lifted)
-        let rightNeighbor = ordered[(min(index + 1, ordered.count))...].compactMap(\.frame).first.map(lifted)
+        // Neighbors from the GLOBAL desired order, not just the item's own
+        // section: at a section boundary the adjacent item belongs to the
+        // NEXT cluster, and a one-sided "right.minX - 14" target overshoots
+        // into that item's footprint (bar spacing is tighter than 14pt) — the
+        // agent then slots the drop one place too far left. Verified: Figma,
+        // first-of-Hidden, kept landing left of Always-Hidden's Bitwarden.
+        let globalOrder = editorItems(in: .alwaysHidden)
+            + editorItems(in: .hidden)
+            + editorItems(in: .visible)
+        let index = globalOrder.firstIndex(where: { $0.id == id }) ?? globalOrder.count
+        let leftNeighbor = globalOrder[..<index].reversed().compactMap(\.frame).first.map(lifted)
+        let rightNeighbor = globalOrder[(min(index + 1, globalOrder.count))...].compactMap(\.frame).first.map(lifted)
 
         var targetX: CGFloat
         switch (leftNeighbor, rightNeighbor) {
