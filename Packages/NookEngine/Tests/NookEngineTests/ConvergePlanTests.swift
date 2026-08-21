@@ -31,6 +31,25 @@ import NookCore
         #expect(!plan.dropAssertion)
     }
 
+    @Test func lostCarriedStateStillConcealsAssignedBundles() {
+        // Regression: the carried concealed set is bookkeeping and can be
+        // lost. A concealed item is neither live nor carried then — but its
+        // assignment plus a running app is enough to keep it off the
+        // allowlist. The observation-only plan swapped in allow-all here.
+        let plan = ConvergePlan.compute(
+            model: model([velja: .alwaysHidden, otterkeep: .hidden]),
+            liveIDs: [sound],
+            carriedConcealed: [],
+            runningBundles: ["com.sindresorhus.Velja", "com.example.otterkeep", "com.apple.finder"],
+            revealedSections: [.hidden],
+            steadyExtras: true,
+            exemptBundles: exempt
+        )
+        #expect(plan.concealable == ["com.sindresorhus.Velja"])
+        #expect(!plan.allowedBundles.contains("com.sindresorhus.Velja"))
+        #expect(plan.allowedBundles.contains("com.example.otterkeep"))
+    }
+
     @Test func revealingSectionReleasesItsBundles() {
         let plan = ConvergePlan.compute(
             model: model([velja: .alwaysHidden, otterkeep: .hidden]),

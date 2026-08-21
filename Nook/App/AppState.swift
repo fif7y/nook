@@ -404,9 +404,62 @@ final class AppState {
         orderApplyDebounce = Task { [weak self] in
             try? await Task.sleep(for: .milliseconds(1200))
             guard let self, !Task.isCancelled else { return }
-            await self.engine.applyOrder()
+            // Same re-mint second pass as tidy/newcomer flush: the restart
+            // can re-mint a third-party tag, and a fresh tag had no slot in
+            // the write — the agent parks it off-model and every following
+            // reveal reads as icons jumping around.
+            let written = Set(await self.applyOrderTracked())
             self.snapshot = await self.engine.snapshot()
+            let reMinted = (self.snapshot?.items ?? []).contains { item in
+                item.id.sectionKey != item.id && !written.contains(item.id.rawValue)
+            }
+            if reMinted {
+                NookLog.log("editor: tag re-minted after restart — second order pass")
+                await self.applyOrderTracked()
+                self.snapshot = await self.engine.snapshot()
+            }
         }
+    }
+
+    /// Every applyOrder routes here so adoption knows a machine rebuild is in
+    /// flight: the agent restart fires externalOrderChange, and adopting the
+    /// mid-rebuild bar's order would overwrite the model order the rebuild is
+    /// applying — the two then fight across the next several reveals.
+    private var lastOrderApplyAt = Date.distantPast
+    @discardableResult
+    private func applyOrderTracked() async -> [String] {
+        // Never restart the agent mid-transition — the restart drops the
+        // assertion (everything flashes visible) and that blink would ride
+        // the user's reveal/conceal. Wait for the bar to settle first.
+        let settleDeadline = Date().addingTimeInterval(5)
+        while Date() < settleDeadline, isTransitioning {
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+        lastOrderApplyAt = Date()
+        // The whole rebuild — assertion drop, agent boot, teardown re-swap —
+        // happens under a frozen snapshot of the current band, so the user
+        // sees one clean old-order → new-order swap instead of the churn.
+        let cover = await ConcealGhostOverlay.begin(over: await barBandFrames(), safety: 4)
+        let written = await engine.applyOrder()
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline, await !engine.quiesced(for: 0.4) {
+            try? await Task.sleep(for: .milliseconds(150))
+        }
+        lastOrderApplyAt = Date()
+        cover?.fadeOut()
+        return written
+    }
+
+    /// Union of every live band item's frame — the cover footprint for an
+    /// order apply, where anything (including system items) may reflow.
+    private func barBandFrames() async -> CGRect? {
+        let snap = await engine.snapshot()
+        var union: CGRect?
+        for item in snap.items {
+            guard let frame = item.frame, frame.minY > -5, frame.minY < 50 else { continue }
+            union = union.map { $0.union(frame) } ?? frame
+        }
+        return union
     }
 
     /// Places the icon at its exact slot: between its new neighbors in the
@@ -473,7 +526,7 @@ final class AppState {
             // bounce — while the plist rebuild ranks by the MODEL, needs no
             // frame measurements, and settles every item in one pass.
             NookLog.log("place: applying full bar order for \(flushed.count) queued newcomer(s)")
-            let written = Set(await engine.applyOrder())
+            let written = Set(await applyOrderTracked())
             snapshot = await engine.snapshot()
             // The restart can re-mint a newcomer's tag (title timing at agent
             // boot) — a brand-new tag had no slot in the write and the agent
@@ -484,7 +537,7 @@ final class AppState {
             }
             if reMinted {
                 NookLog.log("place: newcomer tag re-minted after restart — second order pass")
-                await engine.applyOrder()
+                await applyOrderTracked()
                 snapshot = await engine.snapshot()
             }
         }
@@ -712,14 +765,14 @@ final class AppState {
             // synthetic drags bounce at cluster boundaries and can't touch
             // notch-occluded items. Second pass only if the agent re-minted
             // a tag during its restart (that tag never got a slot).
-            let written = Set(await engine.applyOrder())
+            let written = Set(await applyOrderTracked())
             snapshot = await engine.snapshot()
             let reMinted = (snapshot?.items ?? []).contains { item in
                 item.id.sectionKey != item.id && !written.contains(item.id.rawValue)
             }
             if reMinted {
                 NookLog.log("tidy: tag re-minted after restart — second order pass")
-                await engine.applyOrder()
+                await applyOrderTracked()
                 snapshot = await engine.snapshot()
             }
             NookLog.log("tidy: done")
@@ -1041,6 +1094,14 @@ final class AppState {
                 }
                 try? await Task.sleep(for: .milliseconds(300))
                 adoptSectionsFromBar(retry: retry + 1)
+                return
+            }
+            // A machine order-apply restarts the agent, which fires the same
+            // externalOrderChange as a manual drag — adopting the mid-rebuild
+            // bar would overwrite the model order the rebuild is applying,
+            // and the two fight across the next several reveals.
+            if Date().timeIntervalSince(lastOrderApplyAt) < 8 {
+                NookLog.log("adopt: skipped — order apply settling")
                 return
             }
             let snap = await engine.snapshot()

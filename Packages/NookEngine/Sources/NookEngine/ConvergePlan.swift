@@ -43,10 +43,34 @@ struct ConvergePlan: Equatable {
         )
         let carried = carriedConcealed.subtracting(stale.keys)
         let observedIDs = Array(liveIDs.union(carried))
-        let concealable = model.concealableBundleIDs(
+        var concealable = model.concealableBundleIDs(
             observedItems: observedIDs,
             revealing: revealedSections
         )
+        // The model's word, independent of observation: a bundle ASSIGNED to
+        // a non-revealed section stays concealable while its app runs, even
+        // when its item is neither live (it's concealed — that's the point)
+        // nor carried (the carried set is bookkeeping and can be lost). An
+        // observation-only plan computed concealable=[] whenever carried
+        // dropped, swapped in an allow-all assertion, and flashed every
+        // hidden section until the correcting converge landed.
+        var mustShow = Set<String>()
+        for id in observedIDs {
+            guard let bundle = id.bundleID else { continue }
+            let section = model.section(of: id)
+            if section == .visible || revealedSections.contains(section) {
+                mustShow.insert(bundle)
+            }
+        }
+        for (id, section) in model.assignments {
+            guard section != .visible, !revealedSections.contains(section),
+                  let bundle = id.bundleID,
+                  runningBundles.contains(bundle),
+                  !exemptBundles.contains(bundle),
+                  !mustShow.contains(bundle)
+            else { continue }
+            concealable.insert(bundle)
+        }
 
         // System items assigned to a non-revealed section leave the system
         // allowlist — this is how Sound/battery/etc. become hideable. An

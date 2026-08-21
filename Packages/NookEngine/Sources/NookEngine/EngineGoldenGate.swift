@@ -193,12 +193,16 @@ public actor EngineGoldenGate: MenuBarEngine {
             orderedTags.append(contentsOf: ranked.map(\.id.rawValue))
         }
         prefsWatcher?.suppress()
-        AgentPositionStore.writeOrder(orderedTags)
+        // Return every written position KEY (the spread covers known tag
+        // variants) — callers detect a re-mint precisely: a live tag missing
+        // from this set truly got no slot. Returning only orderedTags made
+        // covered variants look unslotted → gratuitous second restarts.
+        let written = AgentPositionStore.writeOrder(orderedTags)
         AgentPositionStore.restartAgent()
         // The agent takes a moment to come back; settle before re-observing.
         try? await Task.sleep(for: .seconds(1.5))
         _ = await refreshSnapshot()
-        return orderedTags
+        return Array(written.keys)
     }
 
     public func click(_ item: ItemID, rightClick: Bool) async -> Bool {
@@ -334,7 +338,7 @@ public actor EngineGoldenGate: MenuBarEngine {
             NookLog.log("converge: concealable items visible under live bookkeeping — assertion lost, re-swapping")
             eventContinuation.yield(.assertionTornDown)
         }
-        NookLog.log("converge: swapping — concealable=\(concealable.sorted()), allow=\(allowedBundles.count), revealed=\(revealedSections.count)")
+        NookLog.log("converge: swapping — concealable=\(concealable.sorted()), allow=\(allowedBundles.count), revealed=\(revealedSections.count), live=\(snapshot.items.count), carried=\(lastSnapshot?.concealed.count ?? -1), assigns=\(model.assignments.count)")
 
         let previous = assertion
         // Bounded wait: the completion is async (and can be a dud) — a stuck
