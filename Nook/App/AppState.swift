@@ -503,8 +503,15 @@ final class AppState {
             + editorItems(in: .hidden)
             + editorItems(in: .visible)
         let index = globalOrder.firstIndex(where: { $0.id == id }) ?? globalOrder.count
-        let leftNeighbor = globalOrder[..<index].reversed().compactMap(\.frame).first.map(lifted)
-        let rightNeighbor = globalOrder[(min(index + 1, globalOrder.count))...].compactMap(\.frame).first.map(lifted)
+        // Keep the neighbor ITEMS, not just their frames — after the drag the
+        // landing is verified against them (x-order), because the lifted-gap
+        // assumption is not reliable at cluster boundaries (verified: a
+        // one-slot boundary drag bounced back — target fell inside the raw
+        // footprint of the left neighbor).
+        let leftPair = globalOrder[..<index].reversed().first(where: { $0.frame != nil })
+        let rightPair = globalOrder[(min(index + 1, globalOrder.count))...].first(where: { $0.frame != nil })
+        let leftNeighbor = leftPair?.frame.map(lifted)
+        let rightNeighbor = rightPair?.frame.map(lifted)
 
         var targetX: CGFloat
         switch (leftNeighbor, rightNeighbor) {
@@ -562,18 +569,52 @@ final class AppState {
             NookLog.log("place: source frame outside menu bar band (\(frame)) — skipping drag")
             return false
         }
+        // The landing is verified by ORDER against the intended neighbors —
+        // landing coordinates legitimately shift with the post-drop reflow,
+        // but the item must sit right of its left neighbor and left of its
+        // right one. A failed first attempt retries once with RAW (unlifted)
+        // neighbor frames: whether the gap closes during the drag differs by
+        // context, and whichever assumption was wrong the first time, the
+        // other target is the correct one.
+        func landedInSlot(_ snap: EngineSnapshot) -> Bool {
+            guard let x = snap.items.first(where: { $0.id == id })?.frame?.midX else { return false }
+            if let l = leftPair, let lx = snap.items.first(where: { $0.id == l.id })?.frame?.midX,
+               x < lx { return false }
+            if let r = rightPair, let rx = snap.items.first(where: { $0.id == r.id })?.frame?.midX,
+               x > rx { return false }
+            return true
+        }
         NookLog.log("place: dragging \(id.rawValue) x=\(frame.midX) → \(targetX) (section \(section))")
         await ItemMover.cmdDrag(
             from: CGPoint(x: frame.midX, y: 12),
             to: CGPoint(x: targetX, y: 12)
         )
         try? await Task.sleep(for: .milliseconds(300))
-        let after = await engine.snapshot()
+        var after = await engine.snapshot()
         snapshot = after
         if let newFrame = after.items.first(where: { $0.id == id })?.frame {
             NookLog.log("place: landed at x=\(newFrame.midX)")
         } else {
             NookLog.log("place: item not observable after drag")
+        }
+        var placed = landedInSlot(after)
+        if !placed,
+           let retryFrame = after.items.first(where: { $0.id == id })?.frame,
+           let rawLeft = leftPair.flatMap({ l in after.items.first { $0.id == l.id }?.frame }),
+           let rawRight = rightPair.flatMap({ r in after.items.first { $0.id == r.id }?.frame }),
+           rawLeft.maxX < rawRight.minX {
+            var retryX = (rawLeft.maxX + rawRight.minX) / 2
+            retryX = min(max(retryX, 200), screen.frame.maxX - 60)
+            NookLog.log("place: retry with raw frames \(id.rawValue) x=\(retryFrame.midX) → \(retryX)")
+            await ItemMover.cmdDrag(
+                from: CGPoint(x: retryFrame.midX, y: 12),
+                to: CGPoint(x: retryX, y: 12)
+            )
+            try? await Task.sleep(for: .milliseconds(300))
+            after = await engine.snapshot()
+            snapshot = after
+            placed = landedInSlot(after)
+            NookLog.log("place: retry landed at x=\(after.items.first(where: { $0.id == id })?.frame?.midX ?? -1) verified=\(placed)")
         }
         // The drag clicked outside Nook — hand focus back to the settings
         // window. Retried: the dragged icon's app can win an activation race
@@ -587,7 +628,7 @@ final class AppState {
                 SettingsWindowController.shared.refocus()
             }
         }
-        return true
+        return placed
     }
 
     /// Capture bar glyphs once the bar is genuinely still: wait out the
