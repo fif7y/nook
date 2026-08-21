@@ -366,19 +366,25 @@ final class AppState {
     /// section zone edge when it has no neighbors. Waits for the bar to settle
     /// first — measuring mid-reflow grabs stale coordinates, and a synthetic
     /// ⌘-drag released in the wrong place can fire system gestures.
-    private func physicallyPlace(_ id: ItemID, in section: NookCore.Section) async {
+    /// Returns true when the icon was dragged into place (or verified already
+    /// there) — false when placement had to be skipped (no frame, nothing to
+    /// measure against), so callers can keep it queued for a retry.
+    @discardableResult
+    private func physicallyPlace(_ id: ItemID, in section: NookCore.Section) async -> Bool {
         // Synthetic drags post raw CGEvents with sleeps between them — two
         // interleaved sequences corrupt each other (second mouse-down while
         // the first drag's button is logically down, targets ping-ponging).
         // Serialize every placement through one chain; callers spawn Tasks
         // freely (editor drops, extras toggles, tidy) and each waits its turn.
         let prior = placementChain
+        var placed = false
         let task = Task { [weak self] in
             await prior?.value
-            await self?.physicallyPlaceNow(id, in: section)
+            placed = await self?.physicallyPlaceNow(id, in: section) ?? false
         }
         placementChain = task
         await task.value
+        return placed
     }
 
     private var placementChain: Task<Void, Never>?
@@ -394,8 +400,10 @@ final class AppState {
     /// Called on every reveal settle: place pending newcomers whose section
     /// is now measurable. Items meanwhile moved by the user (editor drop
     /// places immediately) just drop out of the queue.
+    private var flushingPlacements = false
+
     private func flushPendingPlacements() {
-        guard !pendingPlacements.isEmpty else { return }
+        guard !pendingPlacements.isEmpty, !flushingPlacements else { return }
         let revealed = currentRevealedSections
         let ready = pendingPlacements.filter {
             let section = settings.sectionModel.section(of: $0)
@@ -406,15 +414,41 @@ final class AppState {
             return revealed.isSuperset(of: [.hidden, .alwaysHidden])
         }
         guard !ready.isEmpty else { return }
-        pendingPlacements.subtract(ready)
-        Task {
+        flushingPlacements = true
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.flushingPlacements = false }
+            // AX latency: concealed items regain frames hundreds of ms AFTER
+            // the settle (a partial walk once produced a degenerate midpoint
+            // exactly on the item's own center — "already at slot", queue
+            // lost). Require two fresh walks to agree before measuring; if
+            // the bar never stabilizes, keep the queue for the next settle.
+            var walk = await engine.freshSnapshot()
+            var stable = false
+            for _ in 0..<5 {
+                try? await Task.sleep(for: .milliseconds(180))
+                let next = await engine.freshSnapshot()
+                stable = next.items.count == walk.items.count
+                    && next.items.allSatisfy { item in
+                        walk.items.contains { $0.id == item.id && $0.frame == item.frame }
+                    }
+                walk = next
+                if stable { break }
+            }
+            guard stable else {
+                NookLog.log("place: bar never stabilized — pending queue kept")
+                return
+            }
+            snapshot = walk
             for id in ready.sorted(by: { $0.rawValue < $1.rawValue }) {
-                await physicallyPlace(id, in: settings.sectionModel.section(of: id))
+                if await physicallyPlace(id, in: settings.sectionModel.section(of: id)) {
+                    pendingPlacements.remove(id)
+                }
             }
         }
     }
 
-    private func physicallyPlaceNow(_ id: ItemID, in section: NookCore.Section) async {
+    private func physicallyPlaceNow(_ id: ItemID, in section: NookCore.Section) async -> Bool {
         try? await Task.sleep(for: .milliseconds(450))
         // Freshly-shown extras take a beat to be hosted — retry the lookup
         // briefly instead of giving up on the first stale snapshot.
@@ -431,9 +465,9 @@ final class AppState {
             let frame = item.frame
         else {
             NookLog.log("place: no frame for \(id.rawValue) — skipping physical move (concealed?)")
-            return
+            return false
         }
-        guard let screen = NSScreen.screens.first else { return }
+        guard let screen = NSScreen.screens.first else { return false }
         // Chevron is OPTIONAL: with the Nook icon hidden, live neighbor
         // frames alone anchor the target — only the no-neighbor fallbacks
         // and the final side clamp need the chevron.
@@ -483,7 +517,7 @@ final class AppState {
         default:
             guard let chevronFrame else {
                 NookLog.log("place: no live neighbors and no chevron for \(id.rawValue) — skipping")
-                return
+                return false
             }
             let managedMinX = snap.items
                 .filter { $0.id.bundleID?.hasPrefix("com.apple.") != true && !$0.id.isSystemModule }
@@ -517,7 +551,7 @@ final class AppState {
         let alreadyPlaced = abs(frame.midX - targetX) < 10
         guard !alreadyPlaced else {
             NookLog.log("place: \(id.rawValue) already at slot (x=\(frame.midX), target=\(targetX))")
-            return
+            return true
         }
 
         // The drag must start inside the main display's menu bar band — a
@@ -526,7 +560,7 @@ final class AppState {
         guard frame.minY > -5, frame.minY < 50,
               frame.midX > 0, frame.midX < screen.frame.maxX else {
             NookLog.log("place: source frame outside menu bar band (\(frame)) — skipping drag")
-            return
+            return false
         }
         NookLog.log("place: dragging \(id.rawValue) x=\(frame.midX) → \(targetX) (section \(section))")
         await ItemMover.cmdDrag(
@@ -553,6 +587,7 @@ final class AppState {
                 SettingsWindowController.shared.refocus()
             }
         }
+        return true
     }
 
     /// Capture bar glyphs once the bar is genuinely still: wait out the
