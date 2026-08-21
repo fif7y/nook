@@ -1,0 +1,7 @@
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <rect width="1024" height="1024" fill="#6841ED"/>
+  <!-- the nook arch, centered, scaled 3x from the brand mark -->
+  <g transform="translate(308.75, 159.3) scale(3)">
+    <path d="M18.0459 159.395C18.0459 159.395 18.1734 127.429 18.1734 116.998C18.1734 87.5379 42.9054 66.3535 67.8021 66.3535C92.6033 66.3535 117.431 88.7613 117.431 116.998C117.431 126.227 117.431 159.395 117.431 159.395" stroke="#FFFFFF" stroke-width="35.9477" stroke-linecap="square" stroke-linejoin="round"/>
+  </g>
+</svg>

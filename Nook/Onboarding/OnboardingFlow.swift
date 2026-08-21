@@ -15,8 +15,8 @@ private enum Ink {
     /// Warm near-black, never pure black.
     static let base = Color(red: 0.055, green: 0.05, blue: 0.045)
     static let raised = Color(red: 0.10, green: 0.095, blue: 0.09)
-    /// The nook amber — the one accent, used for the boundary and moments.
-    static let amber = Color(red: 1.0, green: 0.62, blue: 0.28)
+    /// The nook purple — the one accent, used for the boundary and moments.
+    static let accent = Color(red: 0.494, green: 0.373, blue: 0.949)  // #7E5FF2 — lighter brand purple for the always-dark surface
     static let text = Color(red: 0.96, green: 0.95, blue: 0.93)
     static let textDim = Color(red: 0.96, green: 0.95, blue: 0.93).opacity(0.55)
 }
@@ -73,11 +73,11 @@ struct OnboardingFlow: View {
 
     private var footer: some View {
         HStack(spacing: 0) {
-            // Progress: thin amber line that grows — no dots row.
+            // Progress: thin accent line that grows — no dots row.
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Ink.text.opacity(0.08)).frame(height: 2)
-                    Capsule().fill(Ink.amber)
+                    Capsule().fill(Ink.accent)
                         .frame(width: geo.size.width * CGFloat(step + 1) / CGFloat(stepCount), height: 2)
                         .animation(springSoft, value: step)
                 }
@@ -186,7 +186,7 @@ private struct AccessStep: View {
 
             HStack(spacing: 12) {
                 Circle()
-                    .fill(appState.accessibilityGranted ? Ink.amber : Ink.text.opacity(0.15))
+                    .fill(appState.accessibilityGranted ? Ink.accent : Ink.text.opacity(0.15))
                     .frame(width: 8, height: 8)
                     .animation(springSnappy, value: appState.accessibilityGranted)
                 if appState.accessibilityGranted {
@@ -318,7 +318,7 @@ private struct ReadyStep: View {
                     .foregroundStyle(Ink.text)
             }
             .toggleStyle(.switch)
-            .tint(Ink.amber)
+            .tint(Ink.accent)
             .opacity(appeared ? 1 : 0)
             .offset(y: appeared ? 0 : 18)
 
@@ -381,10 +381,10 @@ private struct DemoBar: View {
                 }
             }
 
-            // The chevron — the boundary, marked in amber.
+            // The chevron — the boundary, marked in accent.
             Image(systemName: "chevron.compact.left")
                 .font(.system(size: 15, weight: .semibold))
-                .foregroundStyle(Ink.amber)
+                .foregroundStyle(Ink.accent)
                 .frame(width: 20)
 
             if case .interactive = mode, !dragTucked {
@@ -451,10 +451,10 @@ private struct DemoBar: View {
     private func slot(_ symbol: String, accent: Bool = false) -> some View {
         Image(systemName: symbol)
             .font(.system(size: 13, weight: .medium))
-            .foregroundStyle(accent ? Ink.amber : Ink.text.opacity(0.85))
+            .foregroundStyle(accent ? Ink.accent : Ink.text.opacity(0.85))
             .frame(width: 28, height: 28)
             .background(
-                Circle().fill(accent ? Ink.amber.opacity(0.14) : Ink.text.opacity(0.05))
+                Circle().fill(accent ? Ink.accent.opacity(0.14) : Ink.text.opacity(0.05))
             )
     }
 }
@@ -468,7 +468,7 @@ private struct AmberButtonStyle: ButtonStyle {
             .foregroundStyle(Ink.base)
             .padding(.horizontal, 18)
             .padding(.vertical, 9)
-            .background(Capsule().fill(Ink.amber))
+            .background(Capsule().fill(Ink.accent))
             .scaleEffect(configuration.isPressed ? 0.96 : 1)
             .animation(springSnappy, value: configuration.isPressed)
     }

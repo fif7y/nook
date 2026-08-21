@@ -1,16 +1,20 @@
 // SettingsView.swift
 // Sidebar-shell settings: tab list on the left, one scrolling pane on the
 // right. De-box throughout — panes are borderless cards on soft fills, the
-// amber accent carries selection and controls. About pane included.
+// brand accent carries selection and controls. About pane included.
 
 import NookCore
 import NookEngine
 import ServiceManagement
 import SwiftUI
 
-/// The nook amber — same accent the onboarding uses.
+/// The brand accent — nook purple; slightly lighter in dark mode for contrast.
 enum NookAccent {
-    static let amber = Color(red: 1.0, green: 0.62, blue: 0.28)
+    static let accent = Color(nsColor: NSColor(name: nil) { appearance in
+        appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+            ? NSColor(red: 0.494, green: 0.373, blue: 0.949, alpha: 1)  // #7E5FF2
+            : NSColor(red: 0.408, green: 0.255, blue: 0.929, alpha: 1)  // #6841ED
+    })
 }
 
 enum SettingsTab: String, CaseIterable, Identifiable {
@@ -51,7 +55,7 @@ struct SettingsView: View {
             content
         }
         .frame(minWidth: 720, minHeight: 520)
-        .tint(NookAccent.amber)
+        .tint(NookAccent.accent)
     }
 
     @ViewBuilder
@@ -114,13 +118,13 @@ private struct SidebarRow: View {
                     .font(.system(size: 13, weight: selected ? .semibold : .regular))
                 Spacer(minLength: 0)
             }
-            .foregroundStyle(selected ? NookAccent.amber : .primary)
+            .foregroundStyle(selected ? NookAccent.accent : .primary)
             .padding(.horizontal, 9)
             .padding(.vertical, 6)
             .background(
                 RoundedRectangle(cornerRadius: 7)
                     .fill(selected
-                        ? NookAccent.amber.opacity(0.16)
+                        ? NookAccent.accent.opacity(0.16)
                         : .primary.opacity(hovered ? 0.06 : 0))
             )
             .contentShape(RoundedRectangle(cornerRadius: 7))
@@ -134,7 +138,7 @@ private struct SidebarRow: View {
 // MARK: - Segments
 
 /// De-boxed button group: soft-fill track, the selected chip carried by the
-/// amber accent — every option visible at once, no menu to open.
+/// brand accent — every option visible at once, no menu to open.
 struct NookSegments<T: Hashable>: View {
     @Binding var selection: T
     let options: [(T, String)]
@@ -163,13 +167,13 @@ private struct NookSegmentButton: View {
         Button(action: action) {
             Text(label)
                 .font(.system(size: 12, weight: selected ? .semibold : .regular))
-                .foregroundStyle(selected ? NookAccent.amber : .secondary)
+                .foregroundStyle(selected ? NookAccent.accent : .secondary)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 4)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
                         .fill(selected
-                            ? NookAccent.amber.opacity(0.16)
+                            ? NookAccent.accent.opacity(0.16)
                             : .primary.opacity(hovered ? 0.06 : 0))
                 )
                 .contentShape(RoundedRectangle(cornerRadius: 6))
@@ -389,6 +393,7 @@ private struct DisplayRow: View {
                 if hasNotch {
                     Text("Notch")
                         .font(.caption2)
+                        .fixedSize()
                         .padding(.horizontal, 6)
                         .padding(.vertical, 2)
                         .background(.quaternary, in: Capsule())
