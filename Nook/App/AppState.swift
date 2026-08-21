@@ -421,36 +421,23 @@ final class AppState {
         }
         guard !ready.isEmpty else { return }
         flushingPlacements = true
+        pendingPlacements.subtract(ready)
         Task { [weak self] in
             guard let self else { return }
             defer { self.flushingPlacements = false }
-            // AX latency: concealed items regain frames hundreds of ms AFTER
-            // the settle (a partial walk once produced a degenerate midpoint
-            // exactly on the item's own center — "already at slot", queue
-            // lost). Require two fresh walks to agree before measuring; if
-            // the bar never stabilizes, keep the queue for the next settle.
-            var walk = await engine.freshSnapshot()
-            var stable = false
-            for _ in 0..<5 {
-                try? await Task.sleep(for: .milliseconds(180))
-                let next = await engine.freshSnapshot()
-                stable = next.items.count == walk.items.count
-                    && next.items.allSatisfy { item in
-                        walk.items.contains { $0.id == item.id && $0.frame == item.frame }
-                    }
-                walk = next
-                if stable { break }
-            }
-            guard stable else {
-                NookLog.log("place: bar never stabilized — pending queue kept")
-                return
-            }
-            snapshot = walk
-            for id in ready.sorted(by: { $0.rawValue < $1.rawValue }) {
-                if await physicallyPlace(id, in: settings.sectionModel.section(of: id)) {
-                    pendingPlacements.remove(id)
-                }
-            }
+            // Deterministic placement: write the model's FULL desired order
+            // to the agent's position store and restart it. Synthetic drags
+            // proved unreliable here — lift-gap behavior varies by context,
+            // foreign-display frames poison targets, and boundary drops
+            // bounce — while the plist rebuild has none of those failure
+            // modes. One brief bar rebuild, and every item (not just the
+            // newcomer) lands on its model slot.
+            NookLog.log("place: applying full bar order for \(ready.count) queued newcomer(s)")
+            await engine.applyOrder()
+            snapshot = await engine.snapshot()
+            // Positions changed wholesale — stale glyph crops would wear
+            // their old neighbor's icon.
+            captureStableBarGlyphs()
         }
     }
 
