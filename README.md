@@ -91,6 +91,11 @@ swift test --package-path Packages/NookEngine
 
 ## Licenses & acknowledgements
 
+Nook was inspired by [Ice](https://github.com/jordanbaird/Ice), the open-source
+menu bar manager for earlier versions of macOS — Nook picks up where Ice left
+off, rebuilt from scratch for macOS 27's new menu bar architecture (no code is
+shared between the projects).
+
 Nook's only third-party dependency is
 [Sparkle](https://github.com/sparkle-project/Sparkle) (in-app updates), used
 under the [MIT-style Sparkle license](https://github.com/sparkle-project/Sparkle/blob/2.x/LICENSE).
