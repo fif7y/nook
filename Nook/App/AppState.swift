@@ -128,6 +128,9 @@ final class AppState {
                 )
             }
             await engine.setSteadyExtras(settings.hideSystemExtras)
+            // Apps that first appeared while Nook wasn't running route to the
+            // new-items section before the first converge.
+            registerNewItems(from: await engine.snapshot())
             await engine.setModel(settings.sectionModel)
             snapshot = await engine.snapshot()
             // Startup state: everything the model says is hidden, is hidden.
@@ -854,6 +857,29 @@ final class AppState {
         return false
     }
 
+    /// New-app routing: any third-party bundle never seen before gets its
+    /// items assigned to `newItemsDestination`. Runs BEFORE converge so the
+    /// engine never shows a new icon the user asked to have hidden. The very
+    /// first pass (empty known set) is a silent baseline — nothing moves.
+    private func registerNewItems(from snap: EngineSnapshot) {
+        let nookBundle = Bundle.main.bundleIdentifier ?? "app.fif7y.Nook"
+        let candidates = snap.items.map(\.id).filter {
+            guard let bundle = $0.bundleID else { return false }
+            return bundle != nookBundle && !bundle.hasPrefix("com.apple.")
+        }
+        var model = settings.sectionModel
+        let before = model.knownBundles
+        guard model.registerObservedItems(candidates) else { return }
+        let added = model.knownBundles.subtracting(before).sorted()
+        NookLog.log(
+            before.isEmpty
+                ? "register: baseline \(model.knownBundles.count) bundle(s)"
+                : "register: new \(added.joined(separator: ", ")) → \(model.newItemsDestination.rawValue)"
+        )
+        settings.sectionModel = model
+        settings.save()
+    }
+
     private func adopt(from snap: EngineSnapshot) {
         guard settings.showStatusItem else { return }
         // adoptSectionsFromBar defers while transitioning/settling; this is
@@ -890,6 +916,7 @@ final class AppState {
             else { continue }
             let current = model.section(of: item.id)
             let zone: NookCore.Section
+            var confident = true
             if frame.minX >= chevronX {
                 zone = .visible
             } else {
@@ -908,10 +935,15 @@ final class AppState {
                     // unmeasurable — ambiguous, so the model's word stands
                     // (an always-hidden item stays; anything else is hidden).
                     zone = current == .alwaysHidden ? .alwaysHidden : .hidden
+                    confident = false
                 }
             }
             let previousZone = lastAdoptionZones[item.id.rawValue]
-            lastAdoptionZones[item.id.rawValue] = zone
+            // A guessed zone must never become a baseline: a new app lands
+            // far left, reads "hidden" while concealed (ambiguous) and
+            // "alwaysHidden" on the next full reveal — that flap would adopt
+            // as if the user dragged it. Only measured zones persist.
+            if confident { lastAdoptionZones[item.id.rawValue] = zone }
             // First sighting establishes a baseline; only a zone CHANGE adopts.
             guard !isFirstPass, let previousZone, previousZone != zone else { continue }
             guard zone != current else { continue }
@@ -970,9 +1002,11 @@ final class AppState {
             adoptSectionsFromBar()
             Task { snapshot = await engine.snapshot() }
         case .itemsChanged:
-            // Re-converge so a newly appeared bundle joins the allowlist (or
-            // gets routed to its configured new-items section later, M4).
+            // Route never-seen bundles to the configured new-items section,
+            // then re-converge so the change (or a known bundle rejoining the
+            // allowlist) takes effect.
             Task {
+                registerNewItems(from: await engine.snapshot())
                 await engine.setModel(settings.sectionModel)
                 snapshot = await engine.snapshot()
                 // The system camera pill appearing/vanishing is an

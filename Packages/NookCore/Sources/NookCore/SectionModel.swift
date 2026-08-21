@@ -44,15 +44,57 @@ public struct SectionModel: Codable, Equatable, Sendable {
     public var order: [Section: [ItemID]]
     /// Where items never seen before land.
     public var newItemsDestination: Section
+    /// Every third-party bundle Nook has ever observed in the bar. An app
+    /// absent from this set is "new" and routes to `newItemsDestination`.
+    /// Bundle-granularity (not ItemID) because titles can be dynamic — a
+    /// title change must not re-trigger routing for a known app.
+    public var knownBundles: Set<String>
 
     public init(
         assignments: [ItemID: Section] = [:],
         order: [Section: [ItemID]] = [:],
-        newItemsDestination: Section = .hidden
+        newItemsDestination: Section = .hidden,
+        knownBundles: Set<String> = []
     ) {
         self.assignments = assignments
         self.order = order
         self.newItemsDestination = newItemsDestination
+        self.knownBundles = knownBundles
+    }
+
+    // Resilient decode: models saved before `knownBundles` existed load with
+    // an empty set, which the next register pass treats as a baseline.
+    private enum CodingKeys: String, CodingKey {
+        case assignments, order, newItemsDestination, knownBundles
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        assignments = try c.decode([ItemID: Section].self, forKey: .assignments)
+        order = try c.decode([Section: [ItemID]].self, forKey: .order)
+        newItemsDestination = try c.decode(Section.self, forKey: .newItemsDestination)
+        knownBundles = try c.decodeIfPresent(Set<String>.self, forKey: .knownBundles) ?? []
+    }
+
+    /// Folds observed items into `knownBundles`, assigning every item of a
+    /// never-seen bundle to `newItemsDestination`. An empty known set is a
+    /// silent baseline (fresh install or pre-`knownBundles` upgrade):
+    /// everything registers, nothing moves. Callers pre-filter to manageable
+    /// items (third-party status items). Returns true if the model changed.
+    public mutating func registerObservedItems(_ items: [ItemID]) -> Bool {
+        let newBundles = Set(items.compactMap(\.bundleID)).subtracting(knownBundles)
+        guard !newBundles.isEmpty else { return false }
+        let baseline = knownBundles.isEmpty
+        knownBundles.formUnion(newBundles)
+        guard !baseline, newItemsDestination != .visible else { return true }
+        for item in items {
+            guard let bundle = item.bundleID, newBundles.contains(bundle),
+                  assignments[item] == nil
+            else { continue }
+            assignments[item] = newItemsDestination
+            order[newItemsDestination, default: []].append(item)
+        }
+        return true
     }
 
     public func section(of item: ItemID) -> Section {
