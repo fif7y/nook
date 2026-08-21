@@ -6,7 +6,7 @@ import NookCore
 @Suite struct ConvergePlanTests {
     let velja = ItemID(rawValue: "status:com.sindresorhus.Velja::Item-0")
     let veljaDrifted = ItemID(rawValue: "status:com.sindresorhus.Velja::Left and right arrows in a filled circle")
-    let bitwarden = ItemID(rawValue: "status:com.bitwarden.desktop::Item-0")
+    let otterkeep = ItemID(rawValue: "status:com.example.otterkeep::Item-0")
     let sound = ItemID(rawValue: "status:com.apple.MenuBarAgent::com.apple.menuextra.sound")
     let exempt: Set<String> = ["app.fif7y.Nook", "com.apple.MenuBarAgent"]
 
@@ -16,16 +16,16 @@ import NookCore
 
     @Test func hiddenAssignmentConcealsObservedBundle() {
         let plan = ConvergePlan.compute(
-            model: model([velja: .alwaysHidden, bitwarden: .hidden]),
-            liveIDs: [velja, bitwarden],
+            model: model([velja: .alwaysHidden, otterkeep: .hidden]),
+            liveIDs: [velja, otterkeep],
             carriedConcealed: [],
-            runningBundles: ["com.sindresorhus.Velja", "com.bitwarden.desktop", "com.apple.finder"],
+            runningBundles: ["com.sindresorhus.Velja", "com.example.otterkeep", "com.apple.finder"],
             revealedSections: [],
             steadyExtras: true,
             exemptBundles: exempt
         )
-        #expect(plan.concealable == ["com.sindresorhus.Velja", "com.bitwarden.desktop"])
-        #expect(plan.concealed == [velja, bitwarden])
+        #expect(plan.concealable == ["com.sindresorhus.Velja", "com.example.otterkeep"])
+        #expect(plan.concealed == [velja, otterkeep])
         #expect(!plan.allowedBundles.contains("com.sindresorhus.Velja"))
         #expect(plan.allowedBundles.contains("com.apple.finder"))
         #expect(!plan.dropAssertion)
@@ -33,8 +33,8 @@ import NookCore
 
     @Test func revealingSectionReleasesItsBundles() {
         let plan = ConvergePlan.compute(
-            model: model([velja: .alwaysHidden, bitwarden: .hidden]),
-            liveIDs: [velja, bitwarden],
+            model: model([velja: .alwaysHidden, otterkeep: .hidden]),
+            liveIDs: [velja, otterkeep],
             carriedConcealed: [],
             runningBundles: [],
             revealedSections: [.hidden],
@@ -43,7 +43,7 @@ import NookCore
         )
         #expect(plan.concealable == ["com.sindresorhus.Velja"])
         #expect(plan.concealed == [velja])
-        #expect(plan.allowedBundles.contains("com.bitwarden.desktop"))
+        #expect(plan.allowedBundles.contains("com.example.otterkeep"))
     }
 
     @Test func concealedCarriedItemStaysConcealableWhileUnobservable() {
