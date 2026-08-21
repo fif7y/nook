@@ -3,9 +3,7 @@
 </p>
 
 <p align="center">
-  <!-- Uncomment once v0.1.0 ships:
   <a href="https://github.com/fif7y/nook/releases/latest"><img src="https://img.shields.io/github/v/release/fif7y/nook?label=download&color=2ea44f" alt="Download latest release"></a>
-  -->
   <a href="#install"><img src="https://img.shields.io/badge/requirements-macOS_27%2B-E8A33D" alt="Requires macOS 27 or later"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/fif7y/nook" alt="License: GPL-3.0"></a>
   <a href="https://github.com/sponsors/fif7y"><img src="https://img.shields.io/badge/sponsor-%E2%9D%A4-ea4aaa" alt="Sponsor Nook"></a>
