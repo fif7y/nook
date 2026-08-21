@@ -16,12 +16,17 @@ import Testing
     }
 
     @Test func newBundleRoutesToDestination() {
-        var model = SectionModel(newItemsDestination: .hidden, knownBundles: ["com.herd.app"])
+        var model = SectionModel(
+            order: [.hidden: [id("com.herd.app")]],
+            newItemsDestination: .hidden,
+            knownBundles: ["com.herd.app"]
+        )
         let figma = id("com.figma.Desktop")
         let changed = model.registerObservedItems([figma, id("com.herd.app")])
         #expect(changed)
         #expect(model.section(of: figma) == .hidden)
-        #expect(model.order[.hidden]?.contains(figma) == true)
+        // Front of the order — new icons physically spawn at the far left.
+        #expect(model.order[.hidden]?.first == figma)
         #expect(model.knownBundles.contains("com.figma.Desktop"))
     }
 

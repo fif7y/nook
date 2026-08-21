@@ -87,13 +87,17 @@ public struct SectionModel: Codable, Equatable, Sendable {
         let baseline = knownBundles.isEmpty
         knownBundles.formUnion(newBundles)
         guard !baseline, newItemsDestination != .visible else { return true }
+        var routed: [ItemID] = []
         for item in items {
             guard let bundle = item.bundleID, newBundles.contains(bundle),
                   assignments[item] == nil
             else { continue }
             assignments[item] = newItemsDestination
-            order[newItemsDestination, default: []].append(item)
+            routed.append(item)
         }
+        // Front of the order: macOS spawns new icons at the far LEFT of the
+        // status area, so the model mirrors where they physically land.
+        order[newItemsDestination, default: []].insert(contentsOf: routed, at: 0)
         return true
     }
 

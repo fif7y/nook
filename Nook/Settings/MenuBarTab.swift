@@ -71,6 +71,28 @@ struct MenuBarTab: View {
                     symbol: "moon"
                 )
 
+                // The "New" chip above is the same setting made draggable —
+                // this row is its discoverable, labeled twin.
+                HStack(spacing: 8) {
+                    Text("New menu bar icons go to")
+                        .font(.callout)
+                    Picker("", selection: Binding(
+                        get: { appState.settings.sectionModel.newItemsDestination },
+                        set: { destination in
+                            appState.settings.sectionModel.newItemsDestination = destination
+                            appState.settingsChanged()
+                        }
+                    )) {
+                        Text("Visible").tag(NookCore.Section.visible)
+                        Text("Hidden").tag(NookCore.Section.hidden)
+                        Text("Always hidden").tag(NookCore.Section.alwaysHidden)
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .fixedSize()
+                    Spacer()
+                }
+
                 NookItemsStrip()
                     .padding(.top, 6)
 
@@ -123,7 +145,14 @@ private struct EditorSectionView: View {
                 Spacer()
             }
 
-            FlowLayout(spacing: 6) {
+            // Right-anchored like the real bar — icons cluster at the
+            // trailing edge of the screen, so the editor mirrors it.
+            FlowLayout(spacing: 6, trailing: true) {
+                // New icons spawn at the far LEFT of the status area — the
+                // chip marks that landing spot in the destination section.
+                if appState.settings.sectionModel.newItemsDestination == section {
+                    NewItemsChip()
+                }
                 // iconStyle is passed down so the tiles re-render on toggle —
                 // reading it only inside the image cache invalidates nothing.
                 ForEach(items, id: \.id.rawValue) { item in
@@ -156,12 +185,49 @@ private struct EditorSectionView: View {
             .animation(.spring(duration: 0.25), value: rowTargeted)
             .dropDestination(for: String.self) { dropped, _ in
                 guard let raw = dropped.first else { return false }
+                if raw == NewItemsChip.dragID {
+                    appState.settings.sectionModel.newItemsDestination = section
+                    appState.settingsChanged()
+                    return true
+                }
                 appState.moveItem(ItemID(rawValue: raw), to: section, before: nil)
                 return true
             } isTargeted: { targeting in
                 rowTargeted = targeting
             }
         }
+    }
+}
+
+/// Ghost slot marking where new menu bar icons land — the
+/// `newItemsDestination` setting as a draggable artifact. Dashed placeholder
+/// language (kin to LandingSlot), not a bordered tile: it is a slot, not an
+/// item.
+private struct NewItemsChip: View {
+    static let dragID = "nook.new-items-marker"
+
+    var body: some View {
+        VStack(spacing: 3) {
+            Image(systemName: "sparkle")
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+                .frame(width: 20, height: 20)
+                .padding(7)
+                .background(
+                    RoundedRectangle(cornerRadius: 9)
+                        .strokeBorder(
+                            .tertiary.opacity(0.6),
+                            style: StrokeStyle(lineWidth: 1, dash: [4, 3])
+                        )
+                )
+            Text("New")
+                .font(.system(size: 9))
+                .foregroundStyle(.tertiary)
+                .lineLimit(1)
+                .frame(maxWidth: 52)
+        }
+        .help("New menu bar icons land here — drag into another section to change it")
+        .draggable(Self.dragID)
     }
 }
 
@@ -283,6 +349,11 @@ private struct ItemTile: View {
         .draggable(item.id.rawValue)
         .dropDestination(for: String.self) { dropped, _ in
             guard let raw = dropped.first, raw != item.id.rawValue else { return false }
+            if raw == NewItemsChip.dragID {
+                appState.settings.sectionModel.newItemsDestination = section
+                appState.settingsChanged()
+                return true
+            }
             appState.moveItem(ItemID(rawValue: raw), to: section, before: item.id)
             return true
         } isTargeted: { targeting in
@@ -556,42 +627,50 @@ private struct SeparatorChip: View {
 
 // MARK: - Flow layout
 
-/// Minimal wrapping layout for icon tiles.
+/// Minimal wrapping layout for icon tiles. `trailing` anchors each row to the
+/// right edge (reading order unchanged) — the editor sections use it so they
+/// mirror the real bar, which grows from the right side of the screen.
 struct FlowLayout: Layout {
     var spacing: CGFloat = 6
+    var trailing: Bool = false
+
+    private func rows(width: CGFloat, subviews: Subviews) -> [[(index: Int, size: CGSize)]] {
+        var rows: [[(Int, CGSize)]] = [[]]
+        var x: CGFloat = 0
+        for (index, subview) in subviews.enumerated() {
+            let size = subview.sizeThatFits(.unspecified)
+            if x + size.width > width, x > 0 {
+                rows.append([])
+                x = 0
+            }
+            rows[rows.count - 1].append((index, size))
+            x += size.width + spacing
+        }
+        return rows
+    }
 
     func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
         let width = proposal.width ?? 400
-        var x: CGFloat = 0
-        var y: CGFloat = 0
-        var rowHeight: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > width, x > 0 {
-                x = 0
-                y += rowHeight + spacing
-                rowHeight = 0
-            }
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
+        var height: CGFloat = 0
+        for (rowIndex, row) in rows(width: width, subviews: subviews).enumerated() {
+            if rowIndex > 0 { height += spacing }
+            height += row.map(\.size.height).max() ?? 0
         }
-        return CGSize(width: width, height: y + rowHeight)
+        return CGSize(width: width, height: height)
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var x = bounds.minX
         var y = bounds.minY
-        var rowHeight: CGFloat = 0
-        for subview in subviews {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > bounds.maxX, x > bounds.minX {
-                x = bounds.minX
-                y += rowHeight + spacing
-                rowHeight = 0
+        for row in rows(width: bounds.width, subviews: subviews) {
+            let rowWidth = row.map(\.size.width).reduce(0, +)
+                + spacing * CGFloat(max(row.count - 1, 0))
+            var x = trailing ? max(bounds.maxX - rowWidth, bounds.minX) : bounds.minX
+            let rowHeight = row.map(\.size.height).max() ?? 0
+            for (index, size) in row {
+                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
+                x += size.width + spacing
             }
-            subview.place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-            x += size.width + spacing
-            rowHeight = max(rowHeight, size.height)
+            y += rowHeight + spacing
         }
     }
 }

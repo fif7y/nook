@@ -269,19 +269,6 @@ private struct GeneralPane: View {
                 .fixedSize()
             }
         }
-
-        SettingsCard(title: "New items") {
-            SettingRow(title: "New menu bar items go to") {
-                Picker("", selection: binding(\.sectionModel.newItemsDestination)) {
-                    Text("Visible").tag(NookCore.Section.visible)
-                    Text("Hidden").tag(NookCore.Section.hidden)
-                    Text("Always hidden").tag(NookCore.Section.alwaysHidden)
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-                .fixedSize()
-            }
-        }
     }
 
     private func binding<T>(
