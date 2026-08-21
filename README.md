@@ -12,7 +12,7 @@ fake bars, no icons jumping when the bar reflows.
 
 - **Hidden and always-hidden sections** — drag icons across the chevron to
   choose what stays, what hides, and what only appears when you ask.
-- **A real layout editor** — live icon previews, drag-and-drop ordering, and
+- **A real layout editor** — app-icon previews, drag-and-drop ordering, and
   honest badges for what macOS groups together or protects.
 - **Per-display behavior** — set a display to always show everything or to
   collapse; whichever display your pointer is on wins.
@@ -24,6 +24,8 @@ fake bars, no icons jumping when the bar reflows.
   its own extras while hiding is active.
 - **Separators** — visual dividers that behave like icons, with adjustable
   opacity.
+- **Reveal styles** — Instant, Smooth, or Fade animation when hidden icons
+  come back, with an adjustable auto-rehide delay.
 - **Signed updates** — Sparkle with EdDSA signatures, checked against a
   signed appcast.
 
@@ -50,13 +52,16 @@ drag Nook to Applications, and launch it.
 Requires **macOS 27 (Golden Gate)**. Earlier versions of macOS use a
 different menu bar architecture that Nook does not target.
 
-On first launch Nook asks for:
+On first launch Nook asks for one permission:
 
 - **Accessibility** (required) — how Nook sees the menu bar's items and
   positions, and how clicking a hidden item works without revealing
   everything.
-- **Screen Recording** (optional) — only for live icon previews in the
-  layout editor. Decline it and the editor shows app icons instead.
+
+Screen Recording is optional and never prompted for during onboarding — if
+granted, Nook uses it to paint seamless cover strips over the bar while
+items swap during reveals and reorders; without it, transitions simply run
+uncovered.
 
 Nook is notarized by Apple and ships with the hardened runtime. It is not
 sandboxed — managing the menu bar requires APIs the App Store sandbox
