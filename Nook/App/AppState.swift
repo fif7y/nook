@@ -130,7 +130,10 @@ final class AppState {
             await engine.setSteadyExtras(settings.hideSystemExtras)
             // Apps that first appeared while Nook wasn't running route to the
             // new-items section before the first converge.
-            registerNewItems(from: await engine.snapshot())
+            let launchNewItems = registerNewItems(from: await engine.snapshot())
+            for id in launchNewItems {
+                await physicallyPlace(id, in: settings.sectionModel.section(of: id))
+            }
             await engine.setModel(settings.sectionModel)
             snapshot = await engine.snapshot()
             // Startup state: everything the model says is hidden, is hidden.
@@ -386,7 +389,12 @@ final class AppState {
         let nookBundle = Bundle.main.bundleIdentifier ?? "app.fif7y.Nook"
         guard
             let item = snap.items.first(where: { $0.id == id }),
-            let frame = item.frame,
+            let frame = item.frame
+        else {
+            NookLog.log("place: no frame for \(id.rawValue) — skipping physical move (concealed?)")
+            return
+        }
+        guard
             let chevron = snap.items.first(where: {
                 $0.id.bundleID == nookBundle
                     && !Self.isNookExtraID($0.id)
@@ -395,7 +403,9 @@ final class AppState {
             let chevronFrame = chevron.frame,
             let screen = NSScreen.screens.first
         else {
-            NookLog.log("place: no frame for \(id.rawValue) — skipping physical move (concealed?)")
+            // Placement targets are chevron-relative; with the Nook status
+            // item hidden there is nothing to measure against.
+            NookLog.log("place: chevron unavailable (Nook icon hidden?) — skipping physical move of \(id.rawValue)")
             return
         }
 
@@ -861,7 +871,12 @@ final class AppState {
     /// items assigned to `newItemsDestination`. Runs BEFORE converge so the
     /// engine never shows a new icon the user asked to have hidden. The very
     /// first pass (empty known set) is a silent baseline — nothing moves.
-    private func registerNewItems(from snap: EngineSnapshot) {
+    /// Returns the new items (empty on baseline) so callers can physically
+    /// slot them: macOS spawns new icons at the far left of the status area —
+    /// inside the hidden/always-hidden zone — so without a placement drag a
+    /// model-visible newcomer flaps sides of the chevron on every reveal.
+    @discardableResult
+    private func registerNewItems(from snap: EngineSnapshot) -> [ItemID] {
         let nookBundle = Bundle.main.bundleIdentifier ?? "app.fif7y.Nook"
         let candidates = snap.items.map(\.id).filter {
             guard let bundle = $0.bundleID else { return false }
@@ -869,15 +884,17 @@ final class AppState {
         }
         var model = settings.sectionModel
         let before = model.knownBundles
-        guard model.registerObservedItems(candidates) else { return }
-        let added = model.knownBundles.subtracting(before).sorted()
+        guard model.registerObservedItems(candidates) else { return [] }
+        let added = model.knownBundles.subtracting(before)
         NookLog.log(
             before.isEmpty
                 ? "register: baseline \(model.knownBundles.count) bundle(s)"
-                : "register: new \(added.joined(separator: ", ")) → \(model.newItemsDestination.rawValue)"
+                : "register: new \(added.sorted().joined(separator: ", ")) → \(model.newItemsDestination.rawValue)"
         )
         settings.sectionModel = model
         settings.save()
+        guard !before.isEmpty else { return [] }
+        return candidates.filter { $0.bundleID.map(added.contains) == true }
     }
 
     private func adopt(from snap: EngineSnapshot) {
@@ -1006,7 +1023,13 @@ final class AppState {
             // then re-converge so the change (or a known bundle rejoining the
             // allowlist) takes effect.
             Task {
-                registerNewItems(from: await engine.snapshot())
+                let newItems = registerNewItems(from: await engine.snapshot())
+                // Slot new icons on the model's side of the chevron while
+                // they still have live frames — after the converge a routed
+                // (concealed) item can't be measured or dragged.
+                for id in newItems {
+                    await physicallyPlace(id, in: settings.sectionModel.section(of: id))
+                }
                 await engine.setModel(settings.sectionModel)
                 snapshot = await engine.snapshot()
                 // The system camera pill appearing/vanishing is an
