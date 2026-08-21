@@ -477,7 +477,7 @@ final class AppState {
         // Chevron is OPTIONAL: with the Nook icon hidden, live neighbor
         // frames alone anchor the target — only the no-neighbor fallbacks
         // and the final side clamp need the chevron.
-        let chevronFrame = snap.items.first(where: {
+        let rawChevronFrame = snap.items.first(where: {
             $0.id.bundleID == nookBundle
                 && !Self.isNookExtraID($0.id)
                 && !$0.id.rawValue.contains("Separator")
@@ -512,13 +512,23 @@ final class AppState {
         // may be a different title-variant of the same item.
         let index = globalOrder.firstIndex(where: { $0.id.sectionKey == id.sectionKey })
             ?? globalOrder.count
+        // Only frames in the SAME menu-bar band as the dragged item are
+        // trustworthy: an AX walk can carry another display's bar (its own
+        // coordinate origin), and one foreign neighbor frame aimed a drop at
+        // x=268 on a status area that starts around x=1050.
+        func inBand(_ f: CGRect) -> Bool {
+            f.minY > -5 && f.minY < 50
+                && abs(f.midY - frame.midY) < 30
+                && f.midX > 0 && f.midX < screen.frame.maxX
+        }
+        let chevronFrame = rawChevronFrame.flatMap { inBand($0) ? $0 : nil }
         // Keep the neighbor ITEMS, not just their frames — after the drag the
         // landing is verified against them (x-order), because the lifted-gap
         // assumption is not reliable at cluster boundaries (verified: a
         // one-slot boundary drag bounced back — target fell inside the raw
         // footprint of the left neighbor).
-        let leftPair = globalOrder[..<index].reversed().first(where: { $0.frame != nil })
-        let rightPair = globalOrder[(min(index + 1, globalOrder.count))...].first(where: { $0.frame != nil })
+        let leftPair = globalOrder[..<index].reversed().first(where: { $0.frame.map(inBand) == true })
+        let rightPair = globalOrder[(min(index + 1, globalOrder.count))...].first(where: { $0.frame.map(inBand) == true })
         let leftNeighbor = leftPair?.frame.map(lifted)
         let rightNeighbor = rightPair?.frame.map(lifted)
 
@@ -587,10 +597,10 @@ final class AppState {
         // other target is the correct one.
         func landedInSlot(_ snap: EngineSnapshot) -> Bool {
             guard let x = snap.items.first(where: { $0.id == id })?.frame?.midX else { return false }
-            if let l = leftPair, let lx = snap.items.first(where: { $0.id == l.id })?.frame?.midX,
-               x < lx { return false }
-            if let r = rightPair, let rx = snap.items.first(where: { $0.id == r.id })?.frame?.midX,
-               x > rx { return false }
+            if let l = leftPair, let lf = snap.items.first(where: { $0.id == l.id })?.frame,
+               inBand(lf), x < lf.midX { return false }
+            if let r = rightPair, let rf = snap.items.first(where: { $0.id == r.id })?.frame,
+               inBand(rf), x > rf.midX { return false }
             return true
         }
         NookLog.log("place: dragging \(id.rawValue) x=\(frame.midX) → \(targetX) (section \(section))")
@@ -611,6 +621,7 @@ final class AppState {
            let retryFrame = after.items.first(where: { $0.id == id })?.frame,
            let rawLeft = leftPair.flatMap({ l in after.items.first { $0.id == l.id }?.frame }),
            let rawRight = rightPair.flatMap({ r in after.items.first { $0.id == r.id }?.frame }),
+           inBand(rawLeft), inBand(rawRight),
            rawLeft.maxX < rawRight.minX {
             var retryX = (rawLeft.maxX + rawRight.minX) / 2
             retryX = min(max(retryX, 200), screen.frame.maxX - 60)
@@ -625,6 +636,9 @@ final class AppState {
             placed = landedInSlot(after)
             NookLog.log("place: retry landed at x=\(after.items.first(where: { $0.id == id })?.frame?.midX ?? -1) verified=\(placed)")
         }
+        // The move invalidated any glyph captured at the old position (a
+        // stale crop shows the neighbor's icon) — refresh once settled.
+        captureStableBarGlyphs()
         // The drag clicked outside Nook — hand focus back to the settings
         // window. Retried: the dragged icon's app can win an activation race
         // hundreds of ms later and steal focus back from a single attempt.
