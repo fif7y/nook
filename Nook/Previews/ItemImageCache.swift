@@ -181,8 +181,17 @@ enum ItemImageCache {
         if let image = nookItemImages.first(where: { item.rawValue.hasSuffix($0.key) })?.value {
             return image
         }
-        if preferBarIcons, let capture = barCaptures[item.rawValue] {
-            return capture
+        if preferBarIcons {
+            if let capture = barCaptures[item.rawValue] {
+                return capture
+            }
+            // Tag drift: the capture may be keyed under another title-variant
+            // of the same bundle — canonically the same item, same glyph.
+            let key = item.sectionKey
+            if key != item,
+               let variant = barCaptures.first(where: { ItemID(rawValue: $0.key).sectionKey == key }) {
+                return variant.value
+            }
         }
         if let symbol = nookItemSymbols.first(where: { item.rawValue.hasSuffix($0.key) })?.value {
             return NSImage(systemSymbolName: symbol, accessibilityDescription: nil)

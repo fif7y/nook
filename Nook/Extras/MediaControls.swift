@@ -54,6 +54,8 @@ final class ExtrasManager {
     /// arrive — start means playing, device release means stopped.
     private var mediaPlaying = false
     private var lastAudioOutputActive = false
+    /// Edge tracking for the camera/mic indicator's placement walk.
+    private var lastCameraIndicatorVisible = false
 
     init(appState: AppState) {
         self.appState = appState
@@ -122,6 +124,15 @@ final class ExtrasManager {
                 let active = cameraMicMonitor?.isActive ?? false
                 visible = active && !systemCameraPillVisible
                 updateCameraSymbol(item, monitor: cameraMicMonitor)
+                // Re-entering layout (isVisible flip) parks the item wherever
+                // the agent decides, not at its model slot — walk it back on
+                // the ACTIVATION edge only (a no-op when already in place;
+                // reveals must not trigger drags).
+                if visible, !lastCameraIndicatorVisible {
+                    let itemID = Self.itemID(for: spec)
+                    Task { await appState?.placeDynamicExtra(itemID) }
+                }
+                lastCameraIndicatorVisible = visible
             case .mediaControls:
                 // Section-governed AND media-relevant: playing, or within the
                 // post-playback linger so pause doesn't swallow resume.

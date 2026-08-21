@@ -372,6 +372,14 @@ final class AppState {
     /// section zone edge when it has no neighbors. Waits for the bar to settle
     /// first — measuring mid-reflow grabs stale coordinates, and a synthetic
     /// ⌘-drag released in the wrong place can fire system gestures.
+    /// Dynamic extras (camera/mic indicator) re-enter layout when their
+    /// hardware activates, parked wherever the agent decides — walk them back
+    /// to their model slot. Own-process drags freeze the bar (raw-frame
+    /// mode), and the placement chain no-ops when already in position.
+    func placeDynamicExtra(_ id: ItemID) async {
+        await physicallyPlace(id, in: settings.sectionModel.section(of: id))
+    }
+
     /// Returns true when the icon was dragged into place (or verified already
     /// there) — false when placement had to be skipped (no frame, nothing to
     /// measure against), so callers can keep it queued for a retry.
