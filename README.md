@@ -8,9 +8,7 @@
   -->
   <a href="#install"><img src="https://img.shields.io/badge/requirements-macOS_27%2B-E8A33D" alt="Requires macOS 27 or later"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/fif7y/nook" alt="License: GPL-3.0"></a>
-  <!-- Uncomment once the GitHub Sponsors profile is approved:
   <a href="https://github.com/sponsors/fif7y"><img src="https://img.shields.io/badge/sponsor-%E2%9D%A4-ea4aaa" alt="Sponsor Nook"></a>
-  -->
 </p>
 
 Nook hides the icons you don't need until you do — hover, click, or press a
