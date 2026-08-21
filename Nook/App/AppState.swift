@@ -219,6 +219,38 @@ final class AppState {
     /// so this rect is the reveal cover's footprint (Instant/Fade styles).
     private var lastConcealedStripRect: CGRect?
 
+    /// Empty-strip snapshot pre-captured while the bar idles concealed — the
+    /// reveal path floats it synchronously instead of paying ~100ms+ of SCK
+    /// capture before the swap can even start (snappiness).
+    private var revealCoverSnapshot: ConcealGhostOverlay.BarSnapshot?
+
+    /// The reveal cover's footprint: the remembered strip, padded generously —
+    /// left is the slide origin (empty bar, free to cover), right catches the
+    /// visible cluster shifting. Strip width drifts between conceals.
+    private var revealCoverRect: CGRect? {
+        lastConcealedStripRect.map {
+            CGRect(x: $0.minX - 120, y: $0.minY, width: $0.width + 180, height: $0.height)
+        }
+    }
+
+    /// Once the bar has gone swap-quiet after a conceal and the ghost is off
+    /// screen, the strip region shows exactly the "empty bar" the next reveal
+    /// wants to freeze — capture it now so the reveal floats it instantly.
+    private func scheduleRevealCoverPrecapture() {
+        guard settings.revealAnimation != .smooth else { return }
+        Task { @MainActor in
+            let deadline = Date().addingTimeInterval(3)
+            while Date() < deadline, await !engine.quiesced(for: 0.5) {
+                try? await Task.sleep(for: .milliseconds(200))
+            }
+            // The ghost's fade must not bake into the snapshot.
+            try? await Task.sleep(for: .milliseconds(300))
+            guard currentRevealedSections.isEmpty, !ConcealGhostOverlay.stripActive
+            else { return }
+            revealCoverSnapshot = await ConcealGhostOverlay.snapshot(of: revealCoverRect)
+        }
+    }
+
     private func concealStripFrames() async -> CGRect? {
         let snap = await engine.snapshot()
         var union: CGRect?
@@ -875,21 +907,19 @@ final class AppState {
                     // where they left); no memory yet → the slide shows.
                     var cover: ConcealGhostOverlay?
                     if settings.revealAnimation != .smooth {
-                        // The strip's width drifts between conceals (items
-                        // come and go while hidden), so the remembered rect
-                        // can under-cover — icons at the group's edges then
-                        // slide in plain view. Pad generously: left is the
-                        // slide origin (empty bar in the snapshot, free to
-                        // cover), right catches the visible cluster shifting.
-                        let coverRect = lastConcealedStripRect.map {
-                            CGRect(
-                                x: $0.minX - 120, y: $0.minY,
-                                width: $0.width + 180, height: $0.height
+                        // Pre-captured snapshot floats synchronously; only
+                        // fall back to a live capture when none is cached.
+                        // 15-min freshness cap: an appearance/wallpaper change
+                        // while idle would flash a stale background.
+                        if let snap = revealCoverSnapshot,
+                           Date().timeIntervalSince(snap.takenAt) < 900 {
+                            cover = ConcealGhostOverlay.begin(from: snap, safety: 2.5)
+                        } else {
+                            cover = await ConcealGhostOverlay.begin(
+                                over: revealCoverRect, safety: 2.5
                             )
                         }
-                        cover = await ConcealGhostOverlay.begin(
-                            over: coverRect, safety: 2.5
-                        )
+                        revealCoverSnapshot = nil
                     }
                     NookLog.log("effect reveal \(sections) → engine (anim=\(settings.revealAnimation.rawValue), cover=\(cover != nil))")
                     await engine.reveal(sections)
@@ -902,8 +932,8 @@ final class AppState {
                         let fade = settings.revealAnimation == .fade
                         Task { @MainActor in
                             let deadline = Date().addingTimeInterval(2)
-                            while Date() < deadline, await !engine.quiesced(for: 0.2) {
-                                try? await Task.sleep(for: .milliseconds(50))
+                            while Date() < deadline, await !engine.quiesced(for: 0.15) {
+                                try? await Task.sleep(for: .milliseconds(30))
                             }
                             if fade { cover.fadeOut() } else { cover.dismiss() }
                         }
@@ -948,8 +978,8 @@ final class AppState {
                         let slide = settings.revealAnimation == .smooth
                         Task { @MainActor in
                             let deadline = Date().addingTimeInterval(2)
-                            while Date() < deadline, await !engine.quiesced(for: 0.2) {
-                                try? await Task.sleep(for: .milliseconds(50))
+                            while Date() < deadline, await !engine.quiesced(for: 0.15) {
+                                try? await Task.sleep(for: .milliseconds(30))
                             }
                             ghost.fadeOut(slide: slide)
                         }
@@ -958,6 +988,7 @@ final class AppState {
                     lastSettleAt = Date()
                     dispatch(rehide.handle(.transitionSettled))
                     settleCatchUp()
+                    scheduleRevealCoverPrecapture()
                 }
             case .armTimer(let deadline):
                 scheduleRehideTimer(at: deadline)

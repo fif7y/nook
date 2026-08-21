@@ -95,11 +95,18 @@ final class ConcealGhostOverlay {
     private let imageView: NSImageView
     private var finished = false
 
-    /// Capture `rect` (AX global top-left coordinates, main display) and put
-    /// the snapshot up at full alpha. Returns nil when capture is unavailable
-    /// — the conceal then runs uncovered, never blocked. Call `fadeOut()` once
-    /// the swap beneath has been issued; a safety timeout fades regardless.
-    static func begin(over rect: CGRect?, safety: TimeInterval = 0.5) async -> ConcealGhostOverlay? {
+    /// A captured strip image ready to float — reveal covers pre-capture at
+    /// conceal settle so the reveal path pays zero capture latency.
+    struct BarSnapshot: @unchecked Sendable {
+        let image: CGImage
+        let capture: CGRect
+        let takenAt: Date
+    }
+
+    /// Capture `rect` (AX global top-left coordinates, main display). Returns
+    /// nil when capture is unavailable — callers then run uncovered, never
+    /// blocked.
+    static func snapshot(of rect: CGRect?) async -> BarSnapshot? {
         guard
             let rect, rect.width > 8,
             CGPreflightScreenCaptureAccess(),
@@ -124,10 +131,23 @@ final class ConcealGhostOverlay {
         guard let shot = try? await SCScreenshotManager.captureImage(
             contentFilter: filter, configuration: config
         ) else {
-            NookLog.log("ghost: strip capture failed — conceal runs uncovered")
+            NookLog.log("ghost: strip capture failed — running uncovered")
             return nil
         }
-        return ConcealGhostOverlay(shot: shot, capture: capture, primary: primary, safety: safety)
+        return BarSnapshot(image: shot, capture: capture, takenAt: Date())
+    }
+
+    /// Capture now and float immediately. Call `fadeOut()`/`dismiss()` once
+    /// the swap beneath has been issued; a safety timeout fades regardless.
+    static func begin(over rect: CGRect?, safety: TimeInterval = 0.5) async -> ConcealGhostOverlay? {
+        guard let snap = await snapshot(of: rect) else { return nil }
+        return begin(from: snap, safety: safety)
+    }
+
+    /// Float a pre-captured snapshot — synchronous, zero capture latency.
+    static func begin(from snap: BarSnapshot, safety: TimeInterval = 0.5) -> ConcealGhostOverlay? {
+        guard let primary = NSScreen.screens.first else { return nil }
+        return ConcealGhostOverlay(shot: snap.image, capture: snap.capture, primary: primary, safety: safety)
     }
 
     private init(shot: CGImage, capture: CGRect, primary: NSScreen, safety: TimeInterval) {
@@ -183,12 +203,12 @@ final class ConcealGhostOverlay {
             let anim = CABasicAnimation(keyPath: "position.x")
             anim.fromValue = layer.position.x
             anim.toValue = layer.position.x + shift
-            anim.duration = 0.22
+            anim.duration = 0.16
             anim.timingFunction = CAMediaTimingFunction(controlPoints: 0.55, 0, 0.8, 0.4)
             layer.add(anim, forKey: "nookSlideOut")
             layer.position.x += shift
         }
-        AlphaFade.run(imageView, to: 0, duration: 0.22, controlPoints: (0.55, 0, 0.8, 0.4)) { [window, weak self] in
+        AlphaFade.run(imageView, to: 0, duration: 0.16, controlPoints: (0.55, 0, 0.8, 0.4)) { [window, weak self] in
             window.orderOut(nil)
             // Only the strip that is still current stands down the flag — an
             // older strip finishing must not expose a newer one's cover.
