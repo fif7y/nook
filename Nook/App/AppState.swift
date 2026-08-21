@@ -129,13 +129,16 @@ final class AppState {
             }
             await engine.setSteadyExtras(settings.hideSystemExtras)
             // Apps that first appeared while Nook wasn't running route to the
-            // new-items section before the first converge. Only VISIBLE
-            // newcomers get a placement drag (they must cross the chevron);
-            // hidden/always-hidden ones conceal right where they spawned —
-            // the far left, which is also where the model orders them.
+            // new-items section before the first converge. VISIBLE newcomers
+            // get their placement drag now (still live-framed); concealed
+            // destinations queue until a reveal makes them measurable.
             let launchNewItems = registerNewItems(from: await engine.snapshot())
-            for id in launchNewItems where settings.sectionModel.section(of: id) == .visible {
-                await physicallyPlace(id, in: .visible)
+            for id in launchNewItems {
+                if settings.sectionModel.section(of: id) == .visible {
+                    await physicallyPlace(id, in: .visible)
+                } else {
+                    pendingPlacements.insert(id)
+                }
             }
             await engine.setModel(settings.sectionModel)
             snapshot = await engine.snapshot()
@@ -343,6 +346,8 @@ final class AppState {
         model.order[section] = order
         settings.sectionModel = model
         settings.save()
+        // A deliberate editor drop supersedes any queued newcomer placement.
+        pendingPlacements.remove(id)
         NookLog.log("editor: move \(id.rawValue) → \(section) before=\(beforeID?.rawValue ?? "end")")
         // Extras visibility applies via the engine's reflow companion during
         // the converge below — same reflow, same motion as everything else.
@@ -378,6 +383,37 @@ final class AppState {
 
     private var placementChain: Task<Void, Never>?
 
+    /// Routed-but-not-yet-placed newcomers. A new icon spawns at the far left
+    /// of the VISIBLE-at-that-moment items — but concealed cluster members
+    /// rematerialize around it on reveal, stranding it mid-cluster (Figma
+    /// landed between always-hidden icons). Placement into a concealed
+    /// section can't be measured, so it waits here until a reveal gives the
+    /// section live frames.
+    private var pendingPlacements: Set<ItemID> = []
+
+    /// Called on every reveal settle: place pending newcomers whose section
+    /// is now measurable. Items meanwhile moved by the user (editor drop
+    /// places immediately) just drop out of the queue.
+    private func flushPendingPlacements() {
+        guard !pendingPlacements.isEmpty else { return }
+        let revealed = currentRevealedSections
+        let ready = pendingPlacements.filter {
+            let section = settings.sectionModel.section(of: $0)
+            if section == .visible { return true }
+            // Concealed-cluster slots are only trustworthy under a FULL
+            // reveal — a drop between visible neighbors while a cluster is
+            // concealed can land on the wrong side of its invisible members.
+            return revealed.isSuperset(of: [.hidden, .alwaysHidden])
+        }
+        guard !ready.isEmpty else { return }
+        pendingPlacements.subtract(ready)
+        Task {
+            for id in ready.sorted(by: { $0.rawValue < $1.rawValue }) {
+                await physicallyPlace(id, in: settings.sectionModel.section(of: id))
+            }
+        }
+    }
+
     private func physicallyPlaceNow(_ id: ItemID, in section: NookCore.Section) async {
         try? await Task.sleep(for: .milliseconds(450))
         // Freshly-shown extras take a beat to be hosted — retry the lookup
@@ -397,20 +433,15 @@ final class AppState {
             NookLog.log("place: no frame for \(id.rawValue) — skipping physical move (concealed?)")
             return
         }
-        guard
-            let chevron = snap.items.first(where: {
-                $0.id.bundleID == nookBundle
-                    && !Self.isNookExtraID($0.id)
-                    && !$0.id.rawValue.contains("Separator")
-            }),
-            let chevronFrame = chevron.frame,
-            let screen = NSScreen.screens.first
-        else {
-            // Placement targets are chevron-relative; with the Nook status
-            // item hidden there is nothing to measure against.
-            NookLog.log("place: chevron unavailable (Nook icon hidden?) — skipping physical move of \(id.rawValue)")
-            return
-        }
+        guard let screen = NSScreen.screens.first else { return }
+        // Chevron is OPTIONAL: with the Nook icon hidden, live neighbor
+        // frames alone anchor the target — only the no-neighbor fallbacks
+        // and the final side clamp need the chevron.
+        let chevronFrame = snap.items.first(where: {
+            $0.id.bundleID == nookBundle
+                && !Self.isNookExtraID($0.id)
+                && !$0.id.rawValue.contains("Separator")
+        })?.frame
 
         // Neighbors in the DESIRED order that have live frames — adjusted into
         // the "lifted" coordinate space: once the drag picks the item up, the
@@ -433,11 +464,6 @@ final class AppState {
         let leftNeighbor = ordered[..<index].reversed().compactMap(\.frame).first.map(lifted)
         let rightNeighbor = ordered[(min(index + 1, ordered.count))...].compactMap(\.frame).first.map(lifted)
 
-        let managedMinX = snap.items
-            .filter { $0.id.bundleID?.hasPrefix("com.apple.") != true && !$0.id.isSystemModule }
-            .compactMap(\.frame?.minX)
-            .min() ?? chevronFrame.minX
-
         var targetX: CGFloat
         switch (leftNeighbor, rightNeighbor) {
         case (let left?, let right?) where left.maxX < right.minX:
@@ -447,6 +473,14 @@ final class AppState {
         case (_, let right?):
             targetX = right.minX - 14
         default:
+            guard let chevronFrame else {
+                NookLog.log("place: no live neighbors and no chevron for \(id.rawValue) — skipping")
+                return
+            }
+            let managedMinX = snap.items
+                .filter { $0.id.bundleID?.hasPrefix("com.apple.") != true && !$0.id.isSystemModule }
+                .compactMap(\.frame?.minX)
+                .min() ?? chevronFrame.minX
             switch section {
             case .alwaysHidden: targetX = managedMinX - 20
             case .hidden: targetX = chevronFrame.minX - 15
@@ -461,11 +495,13 @@ final class AppState {
         // "just left of its right neighbor", which is the chevron's far side).
         // Applied LAST: the corner floor once pushed a hidden-section target
         // right of a far-left chevron, dropping the item into the wrong side.
-        switch section {
-        case .visible:
-            targetX = max(targetX, chevronFrame.maxX + 12)
-        case .hidden, .alwaysHidden:
-            targetX = min(targetX, chevronFrame.minX - 12)
+        if let chevronFrame {
+            switch section {
+            case .visible:
+                targetX = max(targetX, chevronFrame.maxX + 12)
+            case .hidden, .alwaysHidden:
+                targetX = min(targetX, chevronFrame.minX - 12)
+            }
         }
 
         // Skip only when the item is genuinely at its slot already — a full
@@ -769,6 +805,9 @@ final class AppState {
                     captureStableBarGlyphs()
                     dispatch(rehide.handle(.transitionSettled))
                     settleCatchUp()
+                    // Newcomers routed into a then-concealed section finally
+                    // have measurable neighbors — walk them to their slot.
+                    flushPendingPlacements()
                     // Swipe-through hover: the pointer can be long gone by the
                     // time the reveal settles — armIfNeeded gave the FULL delay.
                     // Re-arm as a pointer-out so an accidental hover self-heals
@@ -1027,14 +1066,17 @@ final class AppState {
             // allowlist) takes effect.
             Task {
                 let newItems = registerNewItems(from: await engine.snapshot())
-                // Only VISIBLE newcomers need a placement drag (across the
-                // chevron), and it must happen while they still have live
-                // frames — after the converge a concealed item can't be
-                // measured or dragged. Hidden/always-hidden newcomers stay
-                // where macOS spawned them: the far left, matching their
-                // order-front slot in the model.
-                for id in newItems where settings.sectionModel.section(of: id) == .visible {
-                    await physicallyPlace(id, in: .visible)
+                // VISIBLE newcomers get their placement drag immediately —
+                // it must happen while they still have live frames, since
+                // after the converge a concealed item can't be measured or
+                // dragged. Concealed destinations queue for the next reveal:
+                // their cluster has no frames to measure against right now.
+                for id in newItems {
+                    if settings.sectionModel.section(of: id) == .visible {
+                        await physicallyPlace(id, in: .visible)
+                    } else {
+                        pendingPlacements.insert(id)
+                    }
                 }
                 await engine.setModel(settings.sectionModel)
                 snapshot = await engine.snapshot()
