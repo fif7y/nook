@@ -54,6 +54,7 @@ final class AppState {
         engineCanHide = engine.capabilities.canHide
         ItemImageCache.preferBarIcons = settings.editorIconStyle == .barIcons
         NookLog.log("start: axTrusted=\(AXIsProcessTrusted()) canHide=\(engineCanHide) assignments=\(settings.sectionModel.assignments.count)")
+        SparkleController.shared.start()
 
         if !accessibilityGranted || !settings.onboardingCompleted {
             OnboardingController.shared.present(appState: self)

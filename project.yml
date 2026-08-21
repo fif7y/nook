@@ -9,6 +9,9 @@ packages:
     path: Packages/NookCore
   NookEngine:
     path: Packages/NookEngine
+  Sparkle:
+    url: https://github.com/sparkle-project/Sparkle
+    from: 2.9.0
 targets:
   Nook:
     type: application
@@ -19,6 +22,21 @@ targets:
       - package: NookCore
       - package: NookEngine
         product: NookEngine
+      - package: Sparkle
+        product: Sparkle
+    info:
+      path: Nook/Info.plist
+      properties:
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
+        LSUIElement: true
+        NSPrincipalClass: NSApplication
+        NSHumanReadableCopyright: "© 2026 Gabriel Faucon"
+        SUFeedURL: https://fif7y.github.io/nook/appcast.xml
+        SUPublicEDKey: REPLACE_WITH_SPARKLE_ED25519_PUBLIC_KEY
+        SUEnableAutomaticChecks: true
+        SUAutomaticallyUpdate: false
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: app.fif7y.Nook
@@ -31,7 +49,3 @@ targets:
         ENABLE_APP_SANDBOX: "NO"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: YW9UY68SQ7
-        GENERATE_INFOPLIST_FILE: "YES"
-        INFOPLIST_KEY_LSUIElement: "YES"
-        INFOPLIST_KEY_NSHumanReadableCopyright: "© 2026 Gabriel Faucon"
-        INFOPLIST_KEY_NSPrincipalClass: NSApplication

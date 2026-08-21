@@ -401,8 +401,15 @@ private struct AboutPane: View {
                 .font(.caption)
                 .foregroundStyle(.tertiary)
 
-            Button("Replay the intro") {
-                OnboardingController.shared.present(appState: appState)
+            VStack(spacing: 10) {
+                if SparkleController.shared.isConfigured {
+                    Button("Check for Updates…") {
+                        SparkleController.shared.checkForUpdates()
+                    }
+                }
+                Button("Replay the intro") {
+                    OnboardingController.shared.present(appState: appState)
+                }
             }
             .padding(.top, 18)
         }

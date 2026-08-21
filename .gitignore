@@ -8,3 +8,5 @@ xcuserdata/
 *.dmg
 /Thaw reference/
 /_Thaw reference/
+# xcodegen-generated from project.yml info block
+Nook/Info.plist

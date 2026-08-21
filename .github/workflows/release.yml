@@ -1,0 +1,78 @@
+# Release CI: archive → notarize → staple → DMG → appcast.
+#
+# NOTE: Nook targets macOS 27 — this workflow needs a runner image carrying the
+# macOS 27 SDK (Xcode beta). Until GitHub hosts one, run scripts/release.sh
+# locally; this workflow is the same pipeline, kept ready.
+#
+# Required repository secrets:
+#   DEVELOPER_ID_P12          base64 of the Developer ID Application .p12
+#   DEVELOPER_ID_P12_PASSWORD
+#   NOTARY_KEY_ID             App Store Connect API key id
+#   NOTARY_ISSUER_ID          App Store Connect issuer id
+#   NOTARY_KEY_P8             contents of the AuthKey_*.p8
+#   SPARKLE_PRIVATE_KEY       EdDSA private key (from `generate_keys -x`)
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+jobs:
+  release:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: |
+          # Pick the newest Xcode on the image; needs the macOS 27 SDK.
+          sudo xcode-select -s "$(ls -d /Applications/Xcode*.app | sort -V | tail -1)/Contents/Developer"
+          xcodebuild -version
+
+      - name: Import signing certificate
+        env:
+          P12: ${{ secrets.DEVELOPER_ID_P12 }}
+          P12_PASSWORD: ${{ secrets.DEVELOPER_ID_P12_PASSWORD }}
+        run: |
+          KEYCHAIN=build.keychain
+          security create-keychain -p ci "$KEYCHAIN"
+          security default-keychain -s "$KEYCHAIN"
+          security unlock-keychain -p ci "$KEYCHAIN"
+          echo "$P12" | base64 -d > cert.p12
+          security import cert.p12 -k "$KEYCHAIN" -P "$P12_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple: -s -k ci "$KEYCHAIN"
+          rm cert.p12
+
+      - name: Store notary credentials
+        env:
+          KEY_ID: ${{ secrets.NOTARY_KEY_ID }}
+          ISSUER_ID: ${{ secrets.NOTARY_ISSUER_ID }}
+          KEY_P8: ${{ secrets.NOTARY_KEY_P8 }}
+        run: |
+          echo "$KEY_P8" > AuthKey.p8
+          xcrun notarytool store-credentials nook-notary \
+            --key AuthKey.p8 --key-id "$KEY_ID" --issuer "$ISSUER_ID"
+          rm AuthKey.p8
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      - name: Import Sparkle signing key
+        env:
+          SPARKLE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          # generate_appcast reads the key from the keychain; import it there.
+          echo "$SPARKLE_KEY" > sparkle_key
+          echo "SPARKLE_KEY_FILE=$PWD/sparkle_key" >> "$GITHUB_ENV"
+
+      - name: Build, notarize, package
+        run: scripts/release.sh
+
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: nook-release
+          path: |
+            build/releases/*.dmg
+            build/releases/appcast.xml
