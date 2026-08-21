@@ -86,6 +86,11 @@ public actor EngineGoldenGate: MenuBarEngine {
     /// When the last assertion swap was issued — teardown detection ignores
     /// the settle window right after a swap (items take a beat to drop out).
     private var lastSwapAt = Date.distantPast
+    /// Bounded retries for converges that find an EMPTY AX walk. A real bar
+    /// always contains system items, so empty means the agent tree isn't
+    /// readable yet (launch, locked screen) — planning from it swaps in an
+    /// allow-all assertion that un-hides everything for a beat.
+    private var emptyAXRetriesRemaining = 6
 
     public init() {
         var continuation: AsyncStream<EngineEvent>.Continuation!
@@ -220,6 +225,25 @@ public actor EngineGoldenGate: MenuBarEngine {
         let epoch = convergeEpoch
         let snapshot = await refreshSnapshot()
         guard epoch == convergeEpoch else { return }
+        // An empty AX walk can't be trusted: a real bar always has system
+        // items, so this is the agent tree not being readable yet (launch,
+        // locked screen). A plan computed from it has concealable=[] and
+        // would swap in an allow-all assertion — a momentary un-hide flash
+        // followed by a second animated swap when AX populates. Defer with a
+        // bounded retry; past the bound, the itemsChanged fired by the first
+        // successful re-walk re-converges us.
+        if snapshot.items.isEmpty {
+            NookLog.log("converge: AX walk empty — deferring (retries left \(emptyAXRetriesRemaining))")
+            if emptyAXRetriesRemaining > 0 {
+                emptyAXRetriesRemaining -= 1
+                Task {
+                    try? await Task.sleep(for: .milliseconds(500))
+                    await self.converge()
+                }
+            }
+            return
+        }
+        emptyAXRetriesRemaining = 6
         // Running-app set: consulted by the stale prune below (quit apps) and
         // the allowlist build. Fetched once, up front.
         let runningBundles = await MainActor.run {
