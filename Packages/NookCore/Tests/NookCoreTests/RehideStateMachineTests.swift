@@ -81,6 +81,16 @@ import Testing
         #expect(machine.state == .revealed(sections: [.hidden], reason: .hover))
     }
 
+    @Test func pointerLeaveAfterDisplayPolicyArmsQuickTimer() {
+        var machine = RehideStateMachine(policy: .init(autoRehide: true, delay: 5))
+        _ = machine.handle(.revealRequested([.hidden], .displayPolicy), now: now)
+        _ = machine.handle(.transitionSettled, now: now)
+        // Crossing back to a collapse display arms the quick clock, like a
+        // hover-out — the reveal wasn't a deliberate user action.
+        let effects = machine.handle(.pointerLeft, now: now)
+        #expect(effects == [.armTimer(now.addingTimeInterval(1))])
+    }
+
     @Test func pointerLeaveAfterClickKeepsFullDelay() {
         var machine = RehideStateMachine(policy: .init(autoRehide: true, delay: 5))
         _ = machine.handle(.revealRequested([.hidden], .click), now: now)

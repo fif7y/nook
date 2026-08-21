@@ -8,6 +8,8 @@ import Foundation
 
 public enum RevealReason: Hashable, Sendable {
     case hover
+    /// Pointer is on a display configured "always show everything".
+    case displayPolicy
     case click
     case doubleClick
     case hotkey
@@ -162,10 +164,12 @@ public struct RehideStateMachine: Equatable, Sendable {
 
         case (.revealed(_, let reason), .pointerLeft):
             // Hover-out after a hover reveal rehides quickly — the user only
-            // glanced. Deliberate reveals (click, hotkey, chevron) keep the
-            // full configured delay.
+            // glanced. Same for a display-policy reveal once the pointer is
+            // back on a collapse display. Deliberate reveals (click, hotkey,
+            // chevron) keep the full configured delay.
             guard policy.autoRehide else { return [.none] }
-            let interval = reason == .hover ? min(policy.delay, 1.0) : policy.delay
+            let quick = reason == .hover || reason == .displayPolicy
+            let interval = quick ? min(policy.delay, 1.0) : policy.delay
             return [.armTimer(now.addingTimeInterval(interval))]
 
         default:

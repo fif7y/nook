@@ -23,9 +23,23 @@ final class AppState {
         didSet {
             guard oldValue != settingsWindowVisible else { return }
             if !settingsWindowVisible {
-                concealNow()
+                // Closing settings re-applies the pointer display's policy —
+                // an unconditional conceal here collapsed the bar even on
+                // "always show everything" displays.
+                if pointerDisplayBehavior == .alwaysShowAll {
+                    reveal([.hidden], reason: .displayPolicy)
+                } else {
+                    concealNow()
+                }
             }
         }
+    }
+
+    /// Per-display behavior is "the display the pointer is on wins" — this is
+    /// that display's setting. Every path that could conceal the bar must
+    /// consult it; reveal-side crossings live in MenuBarBandMonitor.
+    var pointerDisplayBehavior: DisplayBehavior {
+        settings.behavior(forDisplayUUID: NSScreen.underPointer?.displayUUIDString)
     }
 
     private var rehide = RehideStateMachine()
@@ -114,6 +128,12 @@ final class AppState {
             snapshot = await engine.snapshot()
             // Startup state: everything the model says is hidden, is hidden.
             dispatch(rehide.handle(.concealRequested))
+            // Launch baseline: the band monitor only applies display behavior
+            // on crossings, so the display Nook launches under gets its
+            // policy applied here (queued behind the conceal's settle).
+            if pointerDisplayBehavior == .alwaysShowAll {
+                reveal([.hidden], reason: .displayPolicy)
+            }
         }
     }
 
@@ -257,6 +277,17 @@ final class AppState {
         Task {
             await engine.setSteadyExtras(settings.hideSystemExtras)
             await engine.setModel(settings.sectionModel)
+        }
+    }
+
+    /// A Displays-tab picker changed: apply the pointer display's new policy
+    /// live. Only the reveal side acts here — while the settings window is
+    /// open nothing collapses under the user (existing rule); the collapse
+    /// side lands on window close or the next display crossing.
+    func displayBehaviorEdited() {
+        NookLog.log("displays: behavior edited, pointer display=\(pointerDisplayBehavior)")
+        if pointerDisplayBehavior == .alwaysShowAll {
+            reveal([.hidden], reason: .displayPolicy)
         }
     }
 
@@ -711,7 +742,9 @@ final class AppState {
         ) { [weak self] _ in
             Task { @MainActor in
                 guard let self else { return }
-                if self.settingsWindowVisible || self.bandMonitor?.shouldDeferRehide() == true {
+                if self.settingsWindowVisible
+                    || self.pointerDisplayBehavior == .alwaysShowAll
+                    || self.bandMonitor?.shouldDeferRehide() == true {
                     self.scheduleRehideTimer(at: Date().addingTimeInterval(1.5))
                 } else {
                     self.rehideTriggered(.delayExpired)

@@ -90,7 +90,7 @@ final class MenuBarBandMonitor {
         let location = NSEvent.mouseLocation
         let screen = NSScreen.screens.first { NSMouseInRect(location, $0.frame, false) }
         let inBand = screen.map { isInMenuBarBand(location, of: $0) } ?? false
-        let displayUUID = screen.flatMap(displayUUIDString)
+        let displayUUID = screen?.displayUUIDString
 
         // Per-display behavior: crossing onto an "always show all" display
         // reveals; crossing back to a "collapse" display arms the countdown.
@@ -105,7 +105,10 @@ final class MenuBarBandMonitor {
             if crossed {
                 switch appState.settings.behavior(forDisplayUUID: displayUUID) {
                 case .alwaysShowAll:
-                    appState.reveal([.hidden], reason: .hover)
+                    // Not .hover: a display-policy reveal must not inherit the
+                    // hover fast-rehide path, and the rehide timer defers
+                    // while the pointer stays on this display.
+                    appState.reveal([.hidden], reason: .displayPolicy)
                 case .collapse:
                     if appState.isRevealed {
                         appState.pointerLeftBand()
@@ -226,8 +229,10 @@ final class MenuBarBandMonitor {
         } else if appState.isRevealed {
             // Clicks inside Nook's own UI or a status-item menu/popover are
             // part of using the revealed items — and while the settings window
-            // is open nothing collapses, period.
-            if !appState.settingsWindowVisible, !NSApp.isActive, !pointerIsOverElevatedWindow() {
+            // is open nothing collapses, period. Clicks on an "always show"
+            // display never collapse either: the display's policy wins.
+            if !appState.settingsWindowVisible, !NSApp.isActive, !pointerIsOverElevatedWindow(),
+               appState.settings.behavior(forDisplayUUID: screen?.displayUUIDString) == .collapse {
                 appState.rehideTriggered(.clickedElsewhere)
             }
         }
@@ -282,13 +287,4 @@ final class MenuBarBandMonitor {
         return empty
     }
 
-    private func displayUUIDString(_ screen: NSScreen) -> String? {
-        guard
-            let number = screen.deviceDescription[
-                NSDeviceDescriptionKey("NSScreenNumber")
-            ] as? NSNumber,
-            let uuid = CGDisplayCreateUUIDFromDisplayID(number.uint32Value)?.takeRetainedValue()
-        else { return nil }
-        return CFUUIDCreateString(nil, uuid) as String
-    }
 }

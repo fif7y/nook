@@ -324,15 +324,7 @@ private struct DisplayRow: View {
     @Environment(AppState.self) private var appState
     let screen: NSScreen
 
-    private var uuid: String? {
-        guard
-            let number = screen.deviceDescription[
-                NSDeviceDescriptionKey("NSScreenNumber")
-            ] as? NSNumber,
-            let uuid = CGDisplayCreateUUIDFromDisplayID(number.uint32Value)?.takeRetainedValue()
-        else { return nil }
-        return CFUUIDCreateString(nil, uuid) as String
-    }
+    private var uuid: String? { screen.displayUUIDString }
 
     private var hasNotch: Bool {
         screen.safeAreaInsets.top > 0
@@ -354,6 +346,7 @@ private struct DisplayRow: View {
                         if let uuid {
                             appState.settings.displayOverrides[uuid] = behavior
                             appState.settingsChanged()
+                            appState.displayBehaviorEdited()
                         }
                     }
                 )) {
