@@ -136,14 +136,11 @@ final class AppState {
             // get their placement drag now (still live-framed); concealed
             // destinations queue until a reveal makes them measurable.
             let launchNewItems = registerNewItems(from: await engine.snapshot())
-            for id in launchNewItems {
-                if settings.sectionModel.section(of: id) == .visible {
-                    await physicallyPlace(id, in: .visible)
-                } else {
-                    pendingPlacements.insert(id)
-                }
-            }
+            pendingPlacements.formUnion(launchNewItems)
             await engine.setModel(settings.sectionModel)
+            // Visible-destined newcomers place right away (the flush filter
+            // passes them without a reveal); concealed ones wait for one.
+            flushPendingPlacements()
             snapshot = await engine.snapshot()
             // Startup state: everything the model says is hidden, is hidden.
             dispatch(rehide.handle(.concealRequested))
@@ -359,11 +356,33 @@ final class AppState {
         // the converge below — same reflow, same motion as everything else.
         Task {
             await engine.setModel(model)
-            // Physically place the icon in its section's zone via a synthetic
-            // ⌘-drag — the same native path a human drag takes, so the agent
-            // animates and persists it with NO restart. Sections stack
-            // left→right as [always-hidden][hidden][chevron][visible].
-            await physicallyPlace(id, in: section)
+            if id.sectionKey != id {
+                // Third-party icons reposition via the deterministic plist
+                // rebuild — synthetic drags bounce at cluster boundaries and
+                // can't touch notch-occluded items. Debounced so a burst of
+                // editor drops blinks the bar once.
+                scheduleOrderApply()
+            } else {
+                // Nook-owned (and system) items keep the synthetic ⌘-drag:
+                // own-process drags freeze the bar (raw-frame mode) and are
+                // reliable, with no agent-restart blink.
+                await physicallyPlace(id, in: section)
+            }
+        }
+    }
+
+    private var orderApplyDebounce: Task<Void, Never>?
+
+    /// Coalesced plist rebuild: editor drops within a burst apply as ONE
+    /// agent restart.
+    private func scheduleOrderApply() {
+        orderApplyDebounce?.cancel()
+        orderApplyDebounce = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(1200))
+            guard let self, !Task.isCancelled else { return }
+            await self.engine.applyOrder()
+            self.snapshot = await self.engine.snapshot()
+            self.captureStableBarGlyphs()
         }
     }
 
@@ -418,18 +437,9 @@ final class AppState {
 
     private func flushPendingPlacements() {
         guard !pendingPlacements.isEmpty, !flushingPlacements else { return }
-        let revealed = currentRevealedSections
-        let ready = pendingPlacements.filter {
-            let section = settings.sectionModel.section(of: $0)
-            if section == .visible { return true }
-            // Concealed-cluster slots are only trustworthy under a FULL
-            // reveal — a drop between visible neighbors while a cluster is
-            // concealed can land on the wrong side of its invisible members.
-            return revealed.isSuperset(of: [.hidden, .alwaysHidden])
-        }
-        guard !ready.isEmpty else { return }
         flushingPlacements = true
-        pendingPlacements.subtract(ready)
+        let flushed = pendingPlacements
+        pendingPlacements.removeAll()
         Task { [weak self] in
             guard let self else { return }
             defer { self.flushingPlacements = false }
@@ -437,17 +447,16 @@ final class AppState {
             // to the agent's position store and restart it. Synthetic drags
             // proved unreliable here — lift-gap behavior varies by context,
             // foreign-display frames poison targets, and boundary drops
-            // bounce — while the plist rebuild has none of those failure
-            // modes. One brief bar rebuild, and every item (not just the
-            // newcomer) lands on its model slot.
-            NookLog.log("place: applying full bar order for \(ready.count) queued newcomer(s)")
+            // bounce — while the plist rebuild ranks by the MODEL, needs no
+            // frame measurements, and settles every item in one pass.
+            NookLog.log("place: applying full bar order for \(flushed.count) queued newcomer(s)")
             let written = Set(await engine.applyOrder())
             snapshot = await engine.snapshot()
             // The restart can re-mint a newcomer's tag (title timing at agent
             // boot) — a brand-new tag had no slot in the write and the agent
             // parks it far left. One follow-up pass writes the fresh tags.
             let reMinted = (snapshot?.items ?? []).contains { item in
-                ready.contains { $0.sectionKey == item.id.sectionKey }
+                flushed.contains { $0.sectionKey == item.id.sectionKey }
                     && !written.contains(item.id.rawValue)
             }
             if reMinted {
@@ -672,8 +681,19 @@ final class AppState {
             let first = await engine.freshSnapshot()
             try? await Task.sleep(for: .milliseconds(120))
             let second = await engine.freshSnapshot()
-            let stable = second.items.filter { item in
+            var stable = second.items.filter { item in
                 first.items.contains { $0.id == item.id && $0.frame == item.frame }
+            }
+            // Notch guard: only frames inside the status-item region right
+            // of the notch are real pixels — an item macOS pushed under or
+            // left of the notch keeps a frame but renders nothing, and its
+            // crop caches garbage (Velja wearing a « strip). Skipped items
+            // keep their app-icon fallback until captured at a sane spot.
+            if let area = NSScreen.screens.first?.auxiliaryTopRightArea {
+                stable = stable.filter { item in
+                    guard let f = item.frame else { return false }
+                    return f.minX >= area.minX - 1 && f.maxX <= area.maxX + 1
+                }
             }
             await ItemImageCache.prewarmBarCaptures(items: stable)
             self?.iconCacheVersion += 1
@@ -701,16 +721,21 @@ final class AppState {
         reveal([.hidden, .alwaysHidden], reason: .settingsPreview)
         Task {
             try? await Task.sleep(for: .seconds(1.2))
-            // Two passes: the second verifies — correctly placed items no-op
-            // inside the 10pt tolerance, only genuine misses re-drag.
-            for pass in 1...2 {
-                for section in [NookCore.Section.alwaysHidden, .hidden, .visible] {
-                    for item in editorItems(in: section) {
-                        await physicallyPlace(item.id, in: section)
-                    }
-                }
-                NookLog.log("tidy: pass \(pass) complete")
+            // Deterministic path: one plist rebuild instead of a drag walk —
+            // synthetic drags bounce at cluster boundaries and can't touch
+            // notch-occluded items. Second pass only if the agent re-minted
+            // a tag during its restart (that tag never got a slot).
+            let written = Set(await engine.applyOrder())
+            snapshot = await engine.snapshot()
+            let reMinted = (snapshot?.items ?? []).contains { item in
+                item.id.sectionKey != item.id && !written.contains(item.id.rawValue)
             }
+            if reMinted {
+                NookLog.log("tidy: tag re-minted after restart — second order pass")
+                await engine.applyOrder()
+                snapshot = await engine.snapshot()
+            }
+            captureStableBarGlyphs()
             NookLog.log("tidy: done")
             tidying = false
             if !settingsWindowVisible {
@@ -1170,19 +1195,12 @@ final class AppState {
             // allowlist) takes effect.
             Task {
                 let newItems = registerNewItems(from: await engine.snapshot())
-                // VISIBLE newcomers get their placement drag immediately —
-                // it must happen while they still have live frames, since
-                // after the converge a concealed item can't be measured or
-                // dragged. Concealed destinations queue for the next reveal:
-                // their cluster has no frames to measure against right now.
-                for id in newItems {
-                    if settings.sectionModel.section(of: id) == .visible {
-                        await physicallyPlace(id, in: .visible)
-                    } else {
-                        pendingPlacements.insert(id)
-                    }
-                }
+                pendingPlacements.formUnion(newItems)
                 await engine.setModel(settings.sectionModel)
+                // Visible-destined newcomers place right away; concealed
+                // destinations stay queued until a full reveal makes their
+                // slot deterministic.
+                flushPendingPlacements()
                 snapshot = await engine.snapshot()
                 // The system camera pill appearing/vanishing is an
                 // itemsChanged — Nook's indicator defers to it live. But NOT
