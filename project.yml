@@ -34,7 +34,7 @@ targets:
         NSPrincipalClass: NSApplication
         NSHumanReadableCopyright: "© 2026 Gabriel Faucon"
         SUFeedURL: https://fif7y.github.io/nook/appcast.xml
-        SUPublicEDKey: REPLACE_WITH_SPARKLE_ED25519_PUBLIC_KEY
+        SUPublicEDKey: HyfGTw9yRC/C2CUxxamEhzxZuK+WWuG7WPI6F+BUOgE=
         SUEnableAutomaticChecks: true
         SUAutomaticallyUpdate: false
     settings:
