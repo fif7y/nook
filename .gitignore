@@ -2,6 +2,10 @@
 /build
 # credentials (notary .p8, sparkle private key) — NEVER commit
 /_Assets/
+# local-only docs (purged from public history 2026-08-20)
+docs/M1-FINDINGS.md
+docs/PLAN.md
+docs/SESSION_LOG.md
 DerivedData/
 .build/
 *.xcodeproj
