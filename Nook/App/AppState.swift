@@ -540,7 +540,22 @@ final class AppState {
         let liveBundles = Set(
             (snapshot?.items ?? []).compactMap(\.id.bundleID)
         ).subtracting([Bundle.main.bundleIdentifier ?? ""])
+        // Two frame-nil twins of one bundle (both "concealed") are one item
+        // under a drifted tag plus its stale alias — the engine can't prune
+        // the alias until the item is next observed live, so collapse here:
+        // the ID the section model knows wins, then any deterministic pick.
+        var concealedTwinLoser = Set<ItemID>()
+        let frameNilByBundle = Dictionary(grouping: byID.values.filter {
+            $0.frame == nil && $0.id.bundleID != nil
+                && $0.id.bundleID != Bundle.main.bundleIdentifier
+        }, by: { $0.id.bundleID! })
+        for (_, twins) in frameNilByBundle where twins.count > 1 {
+            let ids = twins.map(\.id).sorted { $0.rawValue < $1.rawValue }
+            let winner = ids.first { settings.sectionModel.assignments[$0] != nil } ?? ids[0]
+            concealedTwinLoser.formUnion(ids.filter { $0 != winner })
+        }
         let all = byID.values.filter { item in
+            if concealedTwinLoser.contains(item.id) { return false }
             if item.frame == nil,
                let bundle = item.id.bundleID,
                liveBundles.contains(bundle) {

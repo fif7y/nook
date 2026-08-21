@@ -190,9 +190,25 @@ public actor EngineGoldenGate: MenuBarEngine {
         // computing from observation alone concludes "nothing to conceal",
         // re-allows the hidden bundles, they reappear, get re-hidden — an
         // endless visible oscillation.
-        let observedIDs = Array(
-            Set(snapshot.items.map(\.id)).union(lastSnapshot?.concealed ?? [])
-        )
+        let liveIDs = Set(snapshot.items.map(\.id))
+        // Agent tags drift (same Velja item enumerates as "Item-0" one day,
+        // its AX description the next). A bundle is never half-concealed, so a
+        // carried concealed ID whose bundle has a live item under a DIFFERENT
+        // ID is a stale alias — prune it here or it rides the union forever
+        // and the item doubles in every observer (editor tiles). Nook's own
+        // items and per-identifier system items legitimately mix live+hidden.
+        let liveBundles = Set(snapshot.items.compactMap(\.id.bundleID))
+        let ownBundle = Bundle.main.bundleIdentifier
+        let carried = (lastSnapshot?.concealed ?? []).filter { id in
+            guard !liveIDs.contains(id),
+                  Self.systemItem(for: id) == nil,
+                  let bundle = id.bundleID, bundle != ownBundle,
+                  liveBundles.contains(bundle)
+            else { return true }
+            NookLog.log("converge: pruned stale concealed alias \(id.rawValue)")
+            return false
+        }
+        let observedIDs = Array(liveIDs.union(carried))
         let concealable = model.concealableBundleIDs(
             observedItems: observedIDs,
             revealing: revealedSections
