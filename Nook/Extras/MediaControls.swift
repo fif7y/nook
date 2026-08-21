@@ -48,6 +48,12 @@ final class ExtrasManager {
     private var specs: [UUID: ExtraItemSpec] = [:]
     private var lastVisible: [UUID: Bool] = [:]
     private var cameraMicMonitor: CameraMicMonitor?
+    /// Play/pause state the media glyph shows. Click intent drives it (players
+    /// keep the output device open while paused, so DeviceIsRunningSomewhere
+    /// alone can't see a pause); real audio EDGES reconcile it when they do
+    /// arrive — start means playing, device release means stopped.
+    private var mediaPlaying = false
+    private var lastAudioOutputActive = false
 
     init(appState: AppState) {
         self.appState = appState
@@ -120,6 +126,12 @@ final class ExtrasManager {
                 // Section-governed AND media-relevant: playing, or within the
                 // post-playback linger so pause doesn't swallow resume.
                 visible = visible && (cameraMicMonitor?.mediaRelevant ?? true)
+                let audioActive = cameraMicMonitor?.audioOutputActive ?? false
+                if audioActive != lastAudioOutputActive {
+                    lastAudioOutputActive = audioActive
+                    mediaPlaying = audioActive
+                }
+                updateMediaSymbol(item, title: spec.itemTitle)
             case .airdrop, .shortcut:
                 break
             }
@@ -193,6 +205,15 @@ final class ExtrasManager {
             : "dot.radiowaves.left.and.right"
     }()
 
+    /// Play when idle (click plays), pause while audio is running (click
+    /// pauses) — the button shows the action a click will take.
+    private func updateMediaSymbol(_ item: NSStatusItem, title: String) {
+        item.button?.image = NSImage(
+            systemSymbolName: mediaPlaying ? "pause.fill" : "play.fill",
+            accessibilityDescription: title
+        )
+    }
+
     private func updateCameraSymbol(_ item: NSStatusItem, monitor: CameraMicMonitor?) {
         let camera = monitor?.cameraActive ?? false
         let mic = monitor?.micActive ?? false
@@ -227,6 +248,8 @@ final class ExtrasManager {
                 popUp(menu, on: statusItem.value)
             } else {
                 MediaKey.playPause.send()
+                mediaPlaying.toggle()
+                updateMediaSymbol(statusItem.value, title: spec.itemTitle)
             }
         case .cameraMicIndicator:
             // Informational; click opens Privacy settings for a quick audit.
