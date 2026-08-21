@@ -18,9 +18,11 @@
 # only for build+notarize with the appcast signed on the dev machine.
 name: Release
 
+# Tag trigger disabled until GitHub ships a runner image with the macOS 27 SDK
+# (macos-latest is still macos-26 — the job dies at Xcode selection). Releases
+# run locally via scripts/release.sh; re-add `push: tags: ["v*"]` when a
+# macOS 27 image exists.
 on:
-  push:
-    tags: ["v*"]
   workflow_dispatch:
 
 jobs:
