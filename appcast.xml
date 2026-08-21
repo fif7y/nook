@@ -1,0 +1,14 @@
+<?xml version="1.0" standalone="yes"?>
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+    <channel>
+        <title>Nook</title>
+        <item>
+            <title>0.1.0</title>
+            <pubDate>Thu, 20 Aug 2026 23:23:46 -0400</pubDate>
+            <sparkle:version>1</sparkle:version>
+            <sparkle:shortVersionString>0.1.0</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/fif7y/nook/releases/download/v0.1.0/Nook-0.1.0.dmg" length="1901712" type="application/octet-stream" sparkle:edSignature="ieIELw7Ta2majcpgV89EZZ1H7o1q8ALIDW9SMnkEuZszO6bshCD+yy2EZ4pdCnKVT5onUrZX3osAWaOvC6siBg=="/>
+        </item>
+    </channel>
+</rss>
