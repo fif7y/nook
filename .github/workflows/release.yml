@@ -11,6 +11,11 @@
 #   NOTARY_ISSUER_ID          App Store Connect issuer id
 #   NOTARY_KEY_P8             contents of the AuthKey_*.p8
 #   SPARKLE_PRIVATE_KEY       EdDSA private key (from `generate_keys -x`)
+#
+# SECURITY: SPARKLE_PRIVATE_KEY converts into arbitrary code on every install
+# (it signs updates). Prefer keeping it OFF CI entirely: run the release
+# locally where the key lives in the login keychain, and use this workflow
+# only for build+notarize with the appcast signed on the dev machine.
 name: Release
 
 on:
@@ -22,7 +27,10 @@ jobs:
   release:
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
+      # SHA-pinned: this job holds the Developer ID cert, notary key, AND the
+      # Sparkle update-signing key — a hijacked action tag must not be able to
+      # exfiltrate them. (SHA = v4 tag at pin time.)
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Select Xcode
         run: |
@@ -55,8 +63,17 @@ jobs:
             --key AuthKey.p8 --key-id "$KEY_ID" --issuer "$ISSUER_ID"
           rm AuthKey.p8
 
-      - name: Install xcodegen
-        run: brew install xcodegen
+      - name: Install xcodegen (pinned, checksum-verified)
+        run: |
+          # NOT brew: an unpinned formula is arbitrary code next to the
+          # release secrets. Fixed release + SHA-256.
+          curl -sL -o xcodegen.zip \
+            "https://github.com/yonaskolb/XcodeGen/releases/download/2.46.0/xcodegen.zip"
+          echo "4d9e34b62172d645eed6457cac13fc222569974098ef4ee9c3368bedf0196806  xcodegen.zip" | shasum -a 256 -c -
+          unzip -q xcodegen.zip
+          sudo PREFIX=/usr/local xcodegen/install.sh
+          rm -rf xcodegen xcodegen.zip
+          xcodegen --version
 
       - name: Import Sparkle signing key
         env:
@@ -74,7 +91,7 @@ jobs:
         run: rm -f sparkle_key
 
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: nook-release
           path: |

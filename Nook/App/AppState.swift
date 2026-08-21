@@ -544,22 +544,15 @@ final class AppState {
     /// section model (and every write keyed off it) tracks the current tag.
     private func healAliasIDs() {
         guard let snap = snapshot else { return }
-        var liveByBundle: [String: [ItemID]] = [:]
-        for item in snap.items {
-            guard let bundle = item.id.bundleID else { continue }
-            liveByBundle[bundle, default: []].append(item.id)
-        }
         var model = settings.sectionModel
-        var changed = false
         let storedIDs = Set(model.assignments.keys).union(model.order.values.joined())
-        for stored in storedIDs {
-            guard let bundle = stored.bundleID,
-                  bundle != Bundle.main.bundleIdentifier,  // extras IDs are stable
-                  let live = liveByBundle[bundle],
-                  !live.contains(stored),
-                  live.count == 1,  // multi-item bundles: can't tell which twin
-                  let liveID = live.first
-            else { continue }
+        let remaps = ItemIdentityResolver.aliasRemaps(
+            storedIDs: storedIDs,
+            liveIDs: snap.items.map(\.id),
+            exemptBundles: EngineGoldenGate.identityExemptBundles
+        )
+        guard !remaps.isEmpty else { return }
+        for (stored, liveID) in remaps {
             if let section = model.assignments.removeValue(forKey: stored),
                model.assignments[liveID] == nil {
                 model.assignments[liveID] = section
@@ -573,14 +566,11 @@ final class AppState {
                 }
                 model.order[key] = order
             }
-            changed = true
             NookLog.log("heal: alias \(stored.rawValue) → \(liveID.rawValue)")
         }
-        if changed {
-            settings.sectionModel = model
-            settings.save()
-            Task { await engine.setModel(model) }
-        }
+        settings.sectionModel = model
+        settings.save()
+        Task { await engine.setModel(model) }
     }
 
     /// Items the layout editor shows for a section: third-party only (Apple
@@ -622,18 +612,12 @@ final class AppState {
         ).subtracting([Bundle.main.bundleIdentifier ?? ""])
         // Two frame-nil twins of one bundle (both "concealed") are one item
         // under a drifted tag plus its stale alias — the engine can't prune
-        // the alias until the item is next observed live, so collapse here:
-        // the ID the section model knows wins, then any deterministic pick.
-        var concealedTwinLoser = Set<ItemID>()
-        let frameNilByBundle = Dictionary(grouping: byID.values.filter {
-            $0.frame == nil && $0.id.bundleID != nil
-                && $0.id.bundleID != Bundle.main.bundleIdentifier
-        }, by: { $0.id.bundleID! })
-        for (_, twins) in frameNilByBundle where twins.count > 1 {
-            let ids = twins.map(\.id).sorted { $0.rawValue < $1.rawValue }
-            let winner = ids.first { settings.sectionModel.assignments[$0] != nil } ?? ids[0]
-            concealedTwinLoser.formUnion(ids.filter { $0 != winner })
-        }
+        // the alias until the item is next observed live, so collapse here.
+        let concealedTwinLoser = ItemIdentityResolver.concealedTwinLosers(
+            concealedIDs: byID.values.filter { $0.frame == nil }.map(\.id),
+            exemptBundles: EngineGoldenGate.identityExemptBundles,
+            isAssigned: { settings.sectionModel.assignments[$0] != nil }
+        )
         let all = byID.values.filter { item in
             if concealedTwinLoser.contains(item.id) { return false }
             if item.frame == nil,

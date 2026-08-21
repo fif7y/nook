@@ -68,6 +68,14 @@ public actor EngineGoldenGate: MenuBarEngine {
         if raw.hasSuffix(".screen-mirroring") { return .screenMirroring }
         return nil
     }
+    /// Bundles whose items legitimately mix live and hidden — never subject
+    /// to tag-drift pruning (Nook's own items; the agent's per-identifier
+    /// system items).
+    public static let identityExemptBundles: Set<String> = [
+        Bundle.main.bundleIdentifier ?? "app.fif7y.Nook",
+        ItemEnumerator.agentBundleID,
+    ]
+
     private var lastSnapshot: EngineSnapshot?
     private var started = false
     /// Actor reentrancy guard: converge() suspends several times, and a stale
@@ -211,44 +219,25 @@ public actor EngineGoldenGate: MenuBarEngine {
             Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
         }
         guard epoch == convergeEpoch else { return }
-        // "Existing" = observed OR currently concealed by us. Concealed items
-        // drop out of the AX tree entirely (macOS 27 single-window), so
-        // computing from observation alone concludes "nothing to conceal",
-        // re-allows the hidden bundles, they reappear, get re-hidden — an
-        // endless visible oscillation.
-        let liveIDs = Set(snapshot.items.map(\.id))
-        // Agent tags drift (same Velja item enumerates as "Item-0" one day,
-        // its AX description the next). A bundle is never half-concealed, so a
-        // carried concealed ID whose bundle has a live item under a DIFFERENT
-        // ID is a stale alias — prune it here or it rides the union forever
-        // and the item doubles in every observer (editor tiles). Nook's own
-        // items and per-identifier system items legitimately mix live+hidden.
-        let liveBundles = Set(snapshot.items.compactMap(\.id.bundleID))
-        let ownBundle = Bundle.main.bundleIdentifier
-        let carried = (lastSnapshot?.concealed ?? []).filter { id in
-            if liveIDs.contains(id) { return true }
-            guard Self.systemItem(for: id) == nil,
-                  let bundle = id.bundleID, bundle != ownBundle
-            else { return true }
-            // Stale alias: the bundle re-enumerated live under a new tag.
-            if liveBundles.contains(bundle) {
-                NookLog.log("converge: pruned stale concealed alias \(id.rawValue)")
-                return false
-            }
-            // Quit app: concealed items are unobservable, but a bundle that is
-            // no longer running has no item at all — carrying it forever left
-            // ghost entries in every observer until relaunch.
-            if !runningBundles.contains(bundle) {
-                NookLog.log("converge: pruned concealed entry for quit app \(id.rawValue)")
-                return false
-            }
-            return true
-        }
-        let observedIDs = Array(liveIDs.union(carried))
-        let concealable = model.concealableBundleIDs(
-            observedItems: observedIDs,
-            revealing: revealedSections
+        // The pure decision step — "existing" set (observed ∪ carried
+        // concealed, drift-pruned), concealable bundles, system allowlist,
+        // bundle allowlist, resulting concealed set. Logic + rationale live
+        // in ConvergePlan.compute (unit-tested); this actor only executes.
+        let plan = ConvergePlan.compute(
+            model: model,
+            liveIDs: Set(snapshot.items.map(\.id)),
+            carriedConcealed: lastSnapshot?.concealed ?? [],
+            runningBundles: runningBundles,
+            revealedSections: revealedSections,
+            steadyExtras: steadyExtras,
+            exemptBundles: Self.identityExemptBundles
         )
+        for (id, reason) in plan.stale {
+            NookLog.log("converge: pruned concealed \(reason == .staleAlias ? "stale alias" : "entry for quit app") \(id.rawValue)")
+        }
+        let concealable = plan.concealable
+        let allowedSystem = plan.allowedSystem
+        let allowedBundles = plan.allowedBundles
 
         guard AssessmentMode.isAvailable else {
             if assertion != nil { invalidateAssertion() }
@@ -256,17 +245,7 @@ public actor EngineGoldenGate: MenuBarEngine {
             return
         }
 
-        // System items assigned to a non-revealed section leave the system
-        // allowlist — this is how Sound/battery/etc. become hideable.
-        let hiddenSystem = Set(model.assignments.compactMap { id, section -> SystemItem? in
-            // An explicit `.visible` assignment must never hide (the section
-            // is by definition never "revealed" — it's always on screen).
-            guard section != .visible, !revealedSections.contains(section) else { return nil }
-            return Self.systemItem(for: id)
-        })
-        let allowedSystem = SystemItem.allCases.filter { !hiddenSystem.contains($0) }
-
-        if concealable.isEmpty, hiddenSystem.isEmpty, !steadyExtras {
+        if plan.dropAssertion {
             // Nothing to hide and extras are allowed back: drop the assertion.
             invalidateAssertion()
             notifyReflowCompanion()
@@ -284,20 +263,6 @@ public actor EngineGoldenGate: MenuBarEngine {
         }
         // With steadyExtras on, an empty concealable set still holds an
         // assertion allowing every observed bundle — only the OS extras hide.
-
-        // Allowlist = every third-party bundle except the concealable. Built
-        // from ALL running apps, not just observed items — a bundle without a
-        // status item is a harmless allow, and it means an app launched after
-        // this converge shows its new icon instead of being swallowed.
-        var allowedBundles = Set<String>()
-        for id in observedIDs {
-            if let bundle = id.bundleID, !concealable.contains(bundle) {
-                allowedBundles.insert(bundle)
-            }
-        }
-        for bundle in runningBundles where !concealable.contains(bundle) {
-            allowedBundles.insert(bundle)
-        }
 
         // Teardown detection: a concealable bundle observed LIVE while our
         // bookkeeping claims a matching assertion means macOS dropped the
@@ -381,13 +346,6 @@ public actor EngineGoldenGate: MenuBarEngine {
         } else {
             NookLog.log("converge: assertion active")
         }
-        let concealed = Set(observedIDs.filter { id in
-            if let system = Self.systemItem(for: id) {
-                return hiddenSystem.contains(system)
-            }
-            guard let bundle = id.bundleID else { return false }
-            return concealable.contains(bundle)
-        })
         // Stamp the concealed set NOW — observers must union it from the
         // moment the swap is issued. The slow part (polling AX until the
         // concealed bundles actually drop out) moves OFF the critical path:
@@ -398,7 +356,7 @@ public actor EngineGoldenGate: MenuBarEngine {
         guard epoch == convergeEpoch else { return }
         lastSnapshot = EngineSnapshot(
             items: after.items,
-            concealed: concealed,
+            concealed: plan.concealed,
             nativeOverflowActive: after.nativeOverflowActive,
             takenAt: after.takenAt
         )

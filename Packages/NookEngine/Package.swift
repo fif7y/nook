@@ -34,5 +34,12 @@ let package = Package(
             dependencies: ["NookEngine"],
             path: "Sources/nook-probe"
         ),
+        // Pure-logic tests only (ConvergePlan and friends) — nothing here may
+        // touch AX, the private framework, or the real menu bar.
+        .testTarget(
+            name: "NookEngineTests",
+            dependencies: ["NookEngine"],
+            path: "Tests/NookEngineTests"
+        ),
     ]
 )

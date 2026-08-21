@@ -136,40 +136,14 @@ final class ExtrasManager {
         lastVisible[id] = visible
         NookLog.log("extras: \(specs[id]?.itemTitle ?? "?") → \(visible ? "show" : "hide (ghost)")")
         // Runs as the engine's reflow companion, so timing coincides with the
-        // assertion swap. The glyph FADES like the agent fades its items —
-        // safe now that sections are physically contiguous (the late gap-close
-        // only displaces neighbors that are themselves invisible mid-swap; an
-        // instant snap read as an unanimated pop).
-        if visible {
-            // Attach silently at FULL width right at companion time — extras
-            // are pinned leftmost in their section, so the width lands in
-            // empty left-edge space and displaces nothing. The glyph then
-            // fades in ~80ms later, in step with the agent fading in the
-            // assertion-revealed items during its reflow.
-            item.isVisible = true
-            item.length = NSStatusItem.squareLength
-            item.button?.alphaValue = 0
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.08) { [weak self] in
-                guard let self, self.lastVisible[id] == true,
-                      let button = self.items[id]?.button else { return }
-                AlphaFade.run(button, to: 1, duration: 0.22, controlPoints: (0.16, 1, 0.3, 1)) {
-                    button.alphaValue = 1  // re-sync the view property
-                }
-            }
-        } else {
-            // The gap must close in the SAME coalesced reflow as the assertion
-            // (any later width change is a second agent animation — bounce and
-            // all). The glyph outlives its item as a ghost overlay: a snapshot
-            // floating at the icon's screen position, fading while the bar
-            // reflows beneath it — gap and fade concurrent on independent
-            // layers, exactly how the agent renders third-party conceals.
-            showFadingGhost(for: item)
-            item.length = 0
-            item.button?.alphaValue = 0
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.45) { [weak self] in
-                guard let self, self.lastVisible[id] == false else { return }
-                self.items[id]?.isVisible = false
-            }
+        // assertion swap — choreography and constants live in StatusItemFader.
+        StatusItemFader.setVisible(
+            visible,
+            item: item,
+            shownLength: NSStatusItem.squareLength,
+            shownAlpha: 1
+        ) { [weak self] in
+            self?.lastVisible[id] == visible
         }
     }
 
@@ -180,44 +154,6 @@ final class ExtrasManager {
             revealed: appState.revealedSectionsForExtras,
             systemCameraPillVisible: appState.systemCameraPillVisible
         )
-    }
-
-    /// Snapshot the button and fade the snapshot at its old screen position.
-    private func showFadingGhost(for item: NSStatusItem) {
-        guard
-            !ConcealGhostOverlay.stripActive,  // the strip already shows this glyph
-            let button = item.button,
-            let buttonWindow = button.window,
-            let rep = button.bitmapImageRepForCachingDisplay(in: button.bounds)
-        else { return }
-        button.cacheDisplay(in: button.bounds, to: rep)
-        let image = NSImage(size: button.bounds.size)
-        image.addRepresentation(rep)
-
-        let screenRect = buttonWindow.convertToScreen(button.convert(button.bounds, to: nil))
-        let ghost = NSWindow(
-            contentRect: screenRect,
-            styleMask: .borderless,
-            backing: .buffered,
-            defer: false
-        )
-        ghost.isOpaque = false
-        ghost.backgroundColor = .clear
-        ghost.level = .statusBar
-        ghost.ignoresMouseEvents = true
-        ghost.hasShadow = false
-        let imageView = NSImageView(image: image)
-        imageView.frame = NSRect(origin: .zero, size: screenRect.size)
-        imageView.wantsLayer = true
-        ghost.contentView = imageView
-        ghost.orderFrontRegardless()
-
-        // Ease-IN for the fade-out (hold, then accelerate away) — the show
-        // curve's ease-out dumped the alpha in the first frames and the hide
-        // read as a pop.
-        AlphaFade.run(imageView, to: 0, duration: 0.22, controlPoints: (0.55, 0, 0.8, 0.4)) {
-            ghost.orderOut(nil)
-        }
     }
 
     // MARK: Item construction
@@ -371,8 +307,12 @@ final class ExtrasManager {
 
 // MARK: - Camera / mic activity
 
-/// Polls "is any camera/mic in use" via public CoreMediaIO / CoreAudio
-/// properties (the OverSight approach). 2s cadence — indicators, not alarms.
+/// "Is any camera/mic in use" via public CoreMediaIO / CoreAudio properties
+/// (the OverSight approach) — EVENT-DRIVEN: `DeviceIsRunningSomewhere`
+/// property listeners per device (plus device-list listeners for hot-plug)
+/// re-poll on change, and a slow 30s fallback timer covers the media-linger
+/// expiry and any listener the OS fails to deliver. The original 2s poll was
+/// Nook's only steady idle wakeup.
 final class CameraMicMonitor {
     private(set) var cameraActive = false
     private(set) var micActive = false
@@ -381,6 +321,12 @@ final class CameraMicMonitor {
     private(set) var lastAudioActiveAt: Date = .distantPast
     private var timer: Timer?
     private let onChange: () -> Void
+    private var audioListenerDevices: [AudioObjectID] = []
+    private var cmioListenerDevices: [CMIOObjectID] = []
+    private lazy var propertyListener: (UInt32, UnsafePointer<AudioObjectPropertyAddress>) -> Void =
+        { [weak self] _, _ in DispatchQueue.main.async { self?.deviceStateChanged() } }
+    private lazy var cmioListener: CMIOObjectPropertyListenerBlock =
+        { [weak self] _, _ in DispatchQueue.main.async { self?.deviceStateChanged() } }
 
     var isActive: Bool { cameraActive || micActive }
 
@@ -393,12 +339,14 @@ final class CameraMicMonitor {
 
     init(onChange: @escaping () -> Void) {
         self.onChange = onChange
-        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+        // Fallback only: catches the media-linger window expiring (a pure
+        // wall-clock transition no listener fires for) and any missed
+        // listener delivery. Generous tolerance = coalesced wakeups.
+        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             self?.poll()
         }
-        // Indicators, not alarms — generous tolerance lets the system
-        // coalesce this wakeup with others instead of firing on its own.
-        timer?.tolerance = 0.5
+        timer?.tolerance = 5
+        installListeners()
         poll()
     }
 
@@ -407,6 +355,129 @@ final class CameraMicMonitor {
     func stop() {
         timer?.invalidate()
         timer = nil
+        removeListeners()
+    }
+
+    /// A device's running state (or the device list) changed — re-install on
+    /// the latter and re-poll either way.
+    private func deviceStateChanged() {
+        removeListeners()
+        installListeners()
+        poll()
+    }
+
+    private func installListeners() {
+        var runningAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var devicesAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        // System object: device list changes (hot-plug).
+        AudioObjectAddPropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &devicesAddress, .main, propertyListener
+        )
+        for deviceID in Self.allAudioDeviceIDs() {
+            if AudioObjectAddPropertyListenerBlock(deviceID, &runningAddress, .main, propertyListener) == noErr {
+                audioListenerDevices.append(deviceID)
+            }
+        }
+
+        var cmioRunning = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceIsRunningSomewhere),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
+        )
+        var cmioDevices = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
+        )
+        CMIOObjectAddPropertyListenerBlock(
+            CMIOObjectID(kCMIOObjectSystemObject), &cmioDevices, .main, cmioListener
+        )
+        for deviceID in Self.allCMIODeviceIDs() {
+            if CMIOObjectAddPropertyListenerBlock(deviceID, &cmioRunning, .main, cmioListener) == noErr {
+                cmioListenerDevices.append(deviceID)
+            }
+        }
+    }
+
+    private func removeListeners() {
+        var runningAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var devicesAddress = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        AudioObjectRemovePropertyListenerBlock(
+            AudioObjectID(kAudioObjectSystemObject), &devicesAddress, .main, propertyListener
+        )
+        for deviceID in audioListenerDevices {
+            AudioObjectRemovePropertyListenerBlock(deviceID, &runningAddress, .main, propertyListener)
+        }
+        audioListenerDevices = []
+
+        var cmioRunning = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceIsRunningSomewhere),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
+        )
+        var cmioDevices = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
+        )
+        CMIOObjectRemovePropertyListenerBlock(
+            CMIOObjectID(kCMIOObjectSystemObject), &cmioDevices, .main, cmioListener
+        )
+        for deviceID in cmioListenerDevices {
+            CMIOObjectRemovePropertyListenerBlock(deviceID, &cmioRunning, .main, cmioListener)
+        }
+        cmioListenerDevices = []
+    }
+
+    private static func allAudioDeviceIDs() -> [AudioObjectID] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var dataSize: UInt32 = 0
+        guard AudioObjectGetPropertyDataSize(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize
+        ) == noErr else { return [] }
+        var deviceIDs = [AudioObjectID](repeating: 0, count: Int(dataSize) / MemoryLayout<AudioObjectID>.size)
+        guard AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &dataSize, &deviceIDs
+        ) == noErr else { return [] }
+        return deviceIDs
+    }
+
+    private static func allCMIODeviceIDs() -> [CMIOObjectID] {
+        var address = CMIOObjectPropertyAddress(
+            mSelector: CMIOObjectPropertySelector(kCMIOHardwarePropertyDevices),
+            mScope: CMIOObjectPropertyScope(kCMIOObjectPropertyScopeGlobal),
+            mElement: CMIOObjectPropertyElement(kCMIOObjectPropertyElementMain)
+        )
+        var dataSize: UInt32 = 0
+        guard CMIOObjectGetPropertyDataSize(
+            CMIOObjectID(kCMIOObjectSystemObject), &address, 0, nil, &dataSize
+        ) == noErr else { return [] }
+        var deviceIDs = [CMIOObjectID](repeating: 0, count: Int(dataSize) / MemoryLayout<CMIOObjectID>.size)
+        var dataUsed: UInt32 = 0
+        guard CMIOObjectGetPropertyData(
+            CMIOObjectID(kCMIOObjectSystemObject), &address, 0, nil, dataSize, &dataUsed, &deviceIDs
+        ) == noErr else { return [] }
+        return deviceIDs
     }
 
     private func poll() {
