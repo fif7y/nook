@@ -1,6 +1,6 @@
-# Nook
-
-A calm menu bar for macOS 27.
+<p align="center">
+  <img src="docs/assets/hero.svg" alt="Nook — a calm menu bar for macOS" width="800">
+</p>
 
 Nook hides the icons you don't need until you do — hover, click, or press a
 shortcut and they slide back in. It's built natively on macOS 27's new menu

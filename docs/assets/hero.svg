@@ -1,0 +1,89 @@
+<svg width="1280" height="400" viewBox="0 0 1280 400" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Nook — a calm menu bar for macOS">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#101319"/>
+      <stop offset="1" stop-color="#0a0c10"/>
+    </linearGradient>
+    <linearGradient id="bar" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#232833"/>
+      <stop offset="1" stop-color="#1a1e27"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#39404f" stop-opacity="0.55"/>
+      <stop offset="1" stop-color="#39404f" stop-opacity="0"/>
+    </linearGradient>
+    <filter id="soft" x="-20%" y="-40%" width="140%" height="200%">
+      <feDropShadow dx="0" dy="8" stdDeviation="16" flood-color="#000000" flood-opacity="0.45"/>
+    </filter>
+  </defs>
+
+  <!-- card -->
+  <rect x="0" y="0" width="1280" height="400" rx="28" fill="url(#bg)"/>
+  <!-- faint top-edge highlight -->
+  <rect x="1" y="1" width="1278" height="120" rx="27" fill="url(#glow)" opacity="0.18"/>
+
+  <!-- wordmark -->
+  <text x="640" y="150" text-anchor="middle"
+        font-family="-apple-system, 'SF Pro Display', 'Segoe UI', system-ui, sans-serif"
+        font-size="62" font-weight="650" letter-spacing="-1.5" fill="#e9ebef">Nook</text>
+  <text x="640" y="192" text-anchor="middle"
+        font-family="-apple-system, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif"
+        font-size="19" font-weight="400" letter-spacing="0.2" fill="#8b93a2">A calm menu bar for macOS.</text>
+
+  <!-- menu bar strip -->
+  <g filter="url(#soft)">
+    <rect x="260" y="252" width="760" height="44" rx="12" fill="url(#bar)"/>
+    <rect x="260.5" y="252.5" width="759" height="43" rx="11.5" stroke="#ffffff" stroke-opacity="0.06"/>
+  </g>
+
+  <!-- hidden section: ghosted icons -->
+  <g stroke="#cfd4dc" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" opacity="0.26">
+    <!-- crescent moon -->
+    <path d="M608 267a7.5 7.5 0 1 0 7.1 10.2 6.3 6.3 0 0 1-7.1-10.2z"/>
+    <!-- bell -->
+    <path d="M650 279.5h15M652 279.5v-6a5.5 5.5 0 0 1 11 0v6M655.8 282a1.7 1.7 0 0 0 3.4 0"/>
+    <!-- eighth note -->
+    <path d="M700 267.5v11.5M700 267.5c2.5.5 5 1.5 5 4.5"/>
+    <circle cx="697.4" cy="279.3" r="2.9"/>
+  </g>
+
+  <!-- chevron divider -->
+  <g stroke="#9aa2b0" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" opacity="0.85">
+    <path d="M736 268l-6 6 6 6"/>
+  </g>
+
+  <!-- visible section -->
+  <g stroke="#dfe3e9" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <!-- magnifier -->
+    <circle cx="772" cy="272" r="6.2" fill="none"/>
+    <path d="M776.6 276.6l4.4 4.4"/>
+    <!-- control center toggles -->
+    <g transform="translate(810,264)">
+      <rect x="0" y="0" width="17" height="7" rx="3.5" fill="none"/>
+      <circle cx="13" cy="3.5" r="1.6" fill="#dfe3e9" stroke="none"/>
+      <rect x="0" y="10" width="17" height="7" rx="3.5" fill="none"/>
+      <circle cx="4" cy="13.5" r="1.6" fill="#dfe3e9" stroke="none"/>
+    </g>
+    <!-- wifi -->
+    <g transform="translate(856,266)">
+      <path d="M0 5.2a13 13 0 0 1 17 0" fill="none"/>
+      <path d="M3.2 9a8.6 8.6 0 0 1 10.6 0" fill="none"/>
+      <circle cx="8.5" cy="13" r="1.7" fill="#dfe3e9" stroke="none"/>
+    </g>
+    <!-- battery -->
+    <g transform="translate(896,266.5)">
+      <rect x="0" y="0" width="22" height="11" rx="3" fill="none"/>
+      <path d="M24 3.6v3.8" stroke-width="2"/>
+      <rect x="2" y="2" width="13" height="7" rx="1.6" fill="#dfe3e9" stroke="none"/>
+    </g>
+  </g>
+  <!-- clock -->
+  <text x="938" y="279.5"
+        font-family="-apple-system, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif"
+        font-size="14.5" font-weight="500" letter-spacing="0.2" fill="#dfe3e9">Wed 9:41</text>
+
+  <!-- footnote -->
+  <text x="640" y="345" text-anchor="middle"
+        font-family="-apple-system, 'SF Pro Text', 'Segoe UI', system-ui, sans-serif"
+        font-size="14" font-weight="400" fill="#5d6572">Hover, click, or press a shortcut — the rest slides back in.</text>
+</svg>
