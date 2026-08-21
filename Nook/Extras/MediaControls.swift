@@ -214,7 +214,7 @@ final class ExtrasManager {
         // Ease-IN for the fade-out (hold, then accelerate away) — the show
         // curve's ease-out dumped the alpha in the first frames and the hide
         // read as a pop.
-        AlphaFade.run(imageView, to: 0, duration: 0.3, controlPoints: (0.55, 0, 0.8, 0.4)) {
+        AlphaFade.run(imageView, to: 0, duration: 0.22, controlPoints: (0.55, 0, 0.8, 0.4)) {
             ghost.orderOut(nil)
         }
     }

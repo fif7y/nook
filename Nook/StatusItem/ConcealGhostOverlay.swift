@@ -137,7 +137,7 @@ final class ConcealGhostOverlay {
         Self.stripActive = true
         NookLog.log("ghost: strip up \(Int(capture.width))×\(Int(capture.height))")
         // Safety: never leave a stale cover if the caller's task dies.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
             self?.fadeOut()
         }
     }
@@ -147,7 +147,7 @@ final class ConcealGhostOverlay {
     func fadeOut() {
         guard !finished else { return }
         finished = true
-        AlphaFade.run(imageView, to: 0, duration: 0.3, controlPoints: (0.55, 0, 0.8, 0.4)) { [window] in
+        AlphaFade.run(imageView, to: 0, duration: 0.22, controlPoints: (0.55, 0, 0.8, 0.4)) { [window] in
             window.orderOut(nil)
             Self.stripActive = false
         }
