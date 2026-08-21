@@ -94,3 +94,6 @@ Everything else is custom code on top of Apple's system frameworks.
 ## License
 
 © 2026 Gabriel Faucon. All rights reserved.
+
+Nook is an independent project, not affiliated with or endorsed by Apple Inc.
+Apple, macOS, and the Mac are trademarks of Apple Inc.
