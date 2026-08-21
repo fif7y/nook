@@ -814,7 +814,10 @@ final class AppState {
     /// boundary. Anything sitting LEFT of it (smaller AX x) is adopted into
     /// Hidden; right of it back to Visible. Uses live AX frames — NOT the
     /// agent's positions plist, which lists new items only lazily (M1 finding).
-    /// Always-Hidden stays settings-managed for now.
+    /// Always-Hidden has no physical marker of its own; its live cluster IS
+    /// the boundary — an item dropped among/left of always-hidden members
+    /// (only visible during a full reveal) adopts in, one dropped among the
+    /// hidden cluster adopts out.
     func adoptSectionsFromBar(retry: Int = 0) {
         Task {
             // Mid-transition bars give false frames — defer briefly. (Only
@@ -836,12 +839,12 @@ final class AppState {
         }
     }
 
-    /// Which side of the chevron each item sat on at the last pass (true =
-    /// left). Reflows shift every frame but never an item's SIDE — only a real
-    /// user drag across the boundary (or moving the chevron itself) does. That
-    /// makes side-change the safe adoption trigger: a settings-assigned item
-    /// still sitting on its old side is never "corrected" back.
-    private var lastAdoptionSides: [String: Bool] = [:]
+    /// Which zone each item sat in at the last pass. Reflows shift every
+    /// frame but never an item's relative position — only a real user drag
+    /// does. That makes zone-CHANGE the safe adoption trigger: a
+    /// settings-assigned item still sitting in its old zone is never
+    /// "corrected" back.
+    private var lastAdoptionZones: [String: NookCore.Section] = [:]
     /// Set on every reveal/conceal settle; adoption holds off while the bar is
     /// mid-reflow.
     private var lastSettleAt: Date = .distantPast
@@ -866,32 +869,93 @@ final class AppState {
             let chevronX = chevron.frame?.minX
         else { return }
 
-        let isFirstPass = lastAdoptionSides.isEmpty
-        NookLog.log("adopt: chevronX=\(chevronX) firstPass=\(isFirstPass) trackedSides=\(lastAdoptionSides.count)")
+        let isFirstPass = lastAdoptionZones.isEmpty
+        NookLog.log("adopt: chevronX=\(chevronX) firstPass=\(isFirstPass) trackedZones=\(lastAdoptionZones.count)")
         var model = settings.sectionModel
         var changed = false
+        // Cluster edges from the PRE-adoption model: the always-hidden and
+        // hidden members' live frames (only present during a full reveal).
+        // Self-excluded per item below so an item never bounds itself.
+        let clusterX: [(id: ItemID, x: CGFloat, section: NookCore.Section)] = snap.items.compactMap {
+            guard let x = $0.frame?.minX else { return nil }
+            let section = model.section(of: $0.id)
+            guard section != .visible else { return nil }
+            return ($0.id, x, section)
+        }
         for item in snap.items {
             guard let bundle = item.id.bundleID,
                   bundle != nookBundle || Self.isNookExtraID(item.id),
                   !bundle.hasPrefix("com.apple."),
                   let frame = item.frame
             else { continue }
-            let isLeft = frame.minX < chevronX
-            let previousSide = lastAdoptionSides[item.id.rawValue]
-            lastAdoptionSides[item.id.rawValue] = isLeft
-            // First sighting establishes a baseline; only a side CHANGE adopts.
-            guard !isFirstPass, let previousSide, previousSide != isLeft else { continue }
             let current = model.section(of: item.id)
-            guard current != .alwaysHidden else { continue }
-            let desired: NookCore.Section = isLeft ? .hidden : .visible
-            guard desired != current else { continue }
-            if desired == .visible {
+            let zone: NookCore.Section
+            if frame.minX >= chevronX {
+                zone = .visible
+            } else {
+                let ahMax = clusterX
+                    .filter { $0.section == .alwaysHidden && $0.id != item.id }
+                    .map(\.x).max()
+                let hMin = clusterX
+                    .filter { $0.section == .hidden && $0.id != item.id }
+                    .map(\.x).min()
+                if let ahMax, frame.minX < ahMax {
+                    zone = .alwaysHidden
+                } else if let hMin, frame.minX > hMin {
+                    zone = .hidden
+                } else {
+                    // Between the clusters, or a cluster is concealed and
+                    // unmeasurable — ambiguous, so the model's word stands
+                    // (an always-hidden item stays; anything else is hidden).
+                    zone = current == .alwaysHidden ? .alwaysHidden : .hidden
+                }
+            }
+            let previousZone = lastAdoptionZones[item.id.rawValue]
+            lastAdoptionZones[item.id.rawValue] = zone
+            // First sighting establishes a baseline; only a zone CHANGE adopts.
+            guard !isFirstPass, let previousZone, previousZone != zone else { continue }
+            guard zone != current else { continue }
+            if zone == .visible {
                 model.assignments.removeValue(forKey: item.id)
             } else {
-                model.assignments[item.id] = desired
+                model.assignments[item.id] = zone
             }
-            NookLog.log("adopt: \(item.id.rawValue) → \(desired)")
+            NookLog.log("adopt: \(item.id.rawValue) → \(zone)")
             changed = true
+        }
+        // Within-section order: the editor treats the explicit stored order as
+        // authoritative, so a manual ⌘-drag would otherwise show at its OLD
+        // slot forever. Fold the bar's left-to-right reality back in: entries
+        // with live frames reorder to match X, frame-nil (concealed) entries
+        // hold their slots, entries whose section changed drop out, and
+        // newly-adopted members slot in by X. Safe here because adopt only
+        // runs on a settled bar — reflows shift frames but preserve X order.
+        let liveX: [ItemID: CGFloat] = snap.items.reduce(into: [:]) {
+            if let x = $1.frame?.minX { $0[$1.id] = x }
+        }
+        for (section, order) in model.order {
+            var newOrder = order.filter { model.section(of: $0) == section }
+            let liveSlots = newOrder.indices.filter { liveX[newOrder[$0]] != nil }
+            let sortedLive = liveSlots.map { newOrder[$0] }.sorted { liveX[$0]! < liveX[$1]! }
+            for (offset, slot) in liveSlots.enumerated() { newOrder[slot] = sortedLive[offset] }
+            let known = Set(newOrder)
+            let missing = snap.items.filter {
+                $0.frame != nil && !known.contains($0.id)
+                    && model.section(of: $0.id) == section
+                    && !$0.id.isSystemModule
+                    && $0.id.bundleID?.hasPrefix("com.apple.") != true
+                    && ($0.id.bundleID != nookBundle || Self.isNookExtraID($0.id))
+            }
+            for item in missing.sorted(by: { liveX[$0.id]! < liveX[$1.id]! }) {
+                let x = liveX[item.id]!
+                let insertAfter = newOrder.lastIndex { liveX[$0].map { $0 < x } == true }
+                newOrder.insert(item.id, at: insertAfter.map { $0 + 1 } ?? 0)
+            }
+            if newOrder != order {
+                model.order[section] = newOrder
+                NookLog.log("adopt: \(section) order reconciled from bar")
+                changed = true
+            }
         }
         if changed {
             settings.sectionModel = model
