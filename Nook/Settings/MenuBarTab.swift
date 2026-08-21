@@ -496,7 +496,12 @@ private struct SeparatorStrip: View {
                 HStack(spacing: 8) {
                     ForEach($state.settings.separators) { $separator in
                         SeparatorChip(separator: $separator) {
-                            appState.settings.separators.removeAll { $0.id == separator.id }
+                            // Read the binding BEFORE the removeAll: the
+                            // predicate runs inside a modify access on
+                            // `settings`, and a @Binding get in there re-enters
+                            // the settings getter — exclusivity crash.
+                            let id = separator.id
+                            appState.settings.separators.removeAll { $0.id == id }
                             appState.settingsChanged()
                         }
                     }

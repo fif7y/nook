@@ -113,6 +113,13 @@ final class AppState {
         }
 
         Task {
+            // The agent DEFERS adopting newly registered status items while
+            // an assessment assertion is active (verified live 2026-08-21: a
+            // fresh item parks offscreen until no assertion holds, then lands
+            // instantly). Nook's own items re-register at every launch, and
+            // the first converge would assert before adoption lands — parking
+            // them for the whole session.
+            await waitForOwnItemAdoption()
             await engine.start()
             // Extras change size inside the same agent reflow as assertion
             // swaps — the only way their motion matches everything else's.
@@ -635,7 +642,7 @@ final class AppState {
                 return false
             }
             let managedMinX = snap.items
-                .filter { $0.id.bundleID?.hasPrefix("com.apple.") != true && !$0.id.isSystemModule }
+                .filter { !Self.isUnmanagedAppleBundle($0.id.bundleID) && !$0.id.isSystemModule }
                 .compactMap(\.frame?.minX)
                 .min() ?? chevronFrame.minX
             switch section {
@@ -834,7 +841,7 @@ final class AppState {
         for id in stored where byID[id] == nil {
             guard let bundle = id.bundleID,
                   bundle != Bundle.main.bundleIdentifier,
-                  !bundle.hasPrefix("com.apple."),
+                  !Self.isUnmanagedAppleBundle(bundle),
                   let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first
             else { continue }
             byID[id] = ObservedItem(id: id, frame: nil, appName: app.localizedName)
@@ -867,7 +874,7 @@ final class AppState {
             if item.id.bundleID == Bundle.main.bundleIdentifier {
                 return Self.isNookExtraID(item.id)
             }
-            if item.id.bundleID?.hasPrefix("com.apple.") == true {
+            if Self.isUnmanagedAppleBundle(item.id.bundleID) {
                 // Core system icons the assertion can individually control
                 // (Sound, battery, Wi-Fi…) are manageable; the rest stay out.
                 return EngineGoldenGate.systemItem(for: item.id) != nil
@@ -912,6 +919,18 @@ final class AppState {
         let raw = id.rawValue
         return raw.contains("::Nook.")
             && !raw.contains("Nook.StatusItem")
+    }
+
+    /// Apple bundle that is NOT manageable as a third-party item — only the
+    /// menuextra → SystemItem allowlist can touch it (or nothing can).
+    /// SystemUIServer's Siri icon deliberately stays out of scope: the
+    /// assertion CAN hide it (bundle-allowlist governed, verified live
+    /// 2026-08-21), but the agent hard-pins its position — plist slots and
+    /// synthetic ⌘-drags are both ignored — and an editor tile that ignores
+    /// placement breaks the editor's promise. macOS's own Siri setting
+    /// already covers show/hide.
+    static func isUnmanagedAppleBundle(_ bundle: String?) -> Bool {
+        bundle?.hasPrefix("com.apple.") == true
     }
 
     /// Nook-owned items hide by their OWN visibility, not the assertion —
@@ -1139,7 +1158,7 @@ final class AppState {
         let nookBundle = Bundle.main.bundleIdentifier ?? "app.fif7y.Nook"
         let candidates = snap.items.map(\.id).filter {
             guard let bundle = $0.bundleID else { return false }
-            return bundle != nookBundle && !bundle.hasPrefix("com.apple.")
+            return bundle != nookBundle && !Self.isUnmanagedAppleBundle(bundle)
         }
         var model = settings.sectionModel
         let before = model.knownBundles
@@ -1153,7 +1172,9 @@ final class AppState {
         settings.sectionModel = model
         settings.save()
         guard !before.isEmpty else { return [] }
-        return candidates.filter { $0.bundleID.map(added.contains) == true }
+        return candidates.filter {
+            $0.bundleID.map(added.contains) == true
+        }
     }
 
     private func adopt(from snap: EngineSnapshot) {
@@ -1187,7 +1208,7 @@ final class AppState {
         for item in snap.items {
             guard let bundle = item.id.bundleID,
                   bundle != nookBundle || Self.isNookExtraID(item.id),
-                  !bundle.hasPrefix("com.apple."),
+                  !Self.isUnmanagedAppleBundle(bundle),
                   let frame = item.frame
             else { continue }
             let current = model.section(of: item.id)
@@ -1255,7 +1276,7 @@ final class AppState {
                 $0.frame != nil && !known.contains($0.id.sectionKey)
                     && model.section(of: $0.id) == section
                     && !$0.id.isSystemModule
-                    && $0.id.bundleID?.hasPrefix("com.apple.") != true
+                    && !Self.isUnmanagedAppleBundle($0.id.bundleID)
                     && ($0.id.bundleID != nookBundle || Self.isNookExtraID($0.id))
             }
             for item in missing.sorted(by: { liveX[$0.id.sectionKey]! < liveX[$1.id.sectionKey]! }) {
@@ -1276,6 +1297,37 @@ final class AppState {
             settings.save()
             Task { await engine.setModel(model) }
         }
+    }
+
+    /// Bounded wait for Nook's own separators/extras to appear in the agent's
+    /// AX tree before the engine may assert (see launch Task). All items are
+    /// still isVisible at this point — hiding happens via the reflow
+    /// companion after the engine starts.
+    private func waitForOwnItemAdoption() async {
+        // Only visible-section items count: hidden-section separators/extras
+        // are width-collapsed at first apply and never enter the AX tree, so
+        // expecting them would guarantee the timeout.
+        var expected = Set(
+            settings.separators.map { SeparatorManager.itemID(for: $0) }
+                .filter { settings.sectionModel.section(of: $0) == .visible }
+        )
+        for spec in settings.extraItems where spec.kind == .mediaControls {
+            let id = ExtrasManager.itemID(for: spec)
+            if settings.sectionModel.section(of: id) == .visible {
+                expected.insert(id)
+            }
+        }
+        guard !expected.isEmpty else { return }
+        let deadline = Date.now.addingTimeInterval(8)
+        while Date.now < deadline {
+            let observed = Set(await engine.snapshot().items.map(\.id))
+            if expected.subtracting(observed).isEmpty {
+                NookLog.log("start: own items adopted (\(expected.count))")
+                return
+            }
+            try? await Task.sleep(for: .milliseconds(500))
+        }
+        NookLog.log("start: own-item adoption timeout — continuing without \(expected.count) item(s)")
     }
 
     private func handle(engineEvent: EngineEvent) {
