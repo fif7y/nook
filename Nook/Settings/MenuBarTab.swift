@@ -130,7 +130,8 @@ private struct EditorSectionView: View {
                     ItemTile(
                         item: item,
                         section: section,
-                        iconStyle: appState.settings.editorIconStyle
+                        iconStyle: appState.settings.editorIconStyle,
+                        iconVersion: appState.iconCacheVersion
                     )
                 }
                 // Trailing landing slot: appears while a chip hovers the row
@@ -185,6 +186,10 @@ private struct ItemTile: View {
     let item: ObservedItem
     let section: NookCore.Section
     let iconStyle: EditorIconStyle
+    /// Bar-glyph captures land asynchronously after a reveal settles;
+    /// ItemImageCache itself is not observable, so this version input is
+    /// what re-renders the tile once a fresh capture exists.
+    let iconVersion: Int
     @State private var hovered = false
     @State private var targeted = false
 

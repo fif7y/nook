@@ -117,6 +117,13 @@ public actor EngineGoldenGate: MenuBarEngine {
 
     // MARK: - MenuBarEngine
 
+    /// Always re-walks AX, bypassing the 0.5s cache — for callers about to
+    /// crop pixels against these frames, where a stale frame set shifts
+    /// every crop one slot over.
+    public func freshSnapshot() async -> EngineSnapshot {
+        await refreshSnapshot()
+    }
+
     public func snapshot() async -> EngineSnapshot {
         if let lastSnapshot, Date().timeIntervalSince(lastSnapshot.takenAt) < 0.5 {
             return lastSnapshot

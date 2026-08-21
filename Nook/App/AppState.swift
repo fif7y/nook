@@ -15,6 +15,10 @@ final class AppState {
         didSet { healAliasIDs() }
     }
     private(set) var accessibilityGranted = AXIsProcessTrusted()
+    /// Bumped when the bar-glyph capture cache gains fresh entries —
+    /// ItemImageCache is not observable, so editor tiles read this to
+    /// re-render once better captures land.
+    var iconCacheVersion = 0
     private(set) var engineCanHide = true
     /// While the settings window is open, auto-rehide is fully suppressed —
     /// the user is mid-workflow between the editor and the bar, and nothing
@@ -265,8 +269,8 @@ final class AppState {
                 // granted — and macOS often applies the grant only after the
                 // app relaunches.
                 CGRequestScreenCaptureAccess()
-            } else if let items = snapshot?.items {
-                Task { await ItemImageCache.prewarmBarCaptures(items: items) }
+            } else {
+                captureStableBarGlyphs()
             }
         }
         separators?.sync(with: settings.separators)
@@ -491,6 +495,25 @@ final class AppState {
         }
     }
 
+    /// Capture bar glyphs once the bar is genuinely still: wait out the
+    /// agent's slide animation, then require frame stability across two
+    /// fresh AX walks — cropping against a moving (or stale-cached) frame
+    /// set shifts every glyph one slot over (Velja wearing PopClip's icon).
+    /// Unstable items are skipped; a later pass gets them.
+    private func captureStableBarGlyphs() {
+        Task { [engine, weak self] in
+            try? await Task.sleep(for: .milliseconds(450))
+            let first = await engine.freshSnapshot()
+            try? await Task.sleep(for: .milliseconds(120))
+            let second = await engine.freshSnapshot()
+            let stable = second.items.filter { item in
+                first.items.contains { $0.id == item.id && $0.frame == item.frame }
+            }
+            await ItemImageCache.prewarmBarCaptures(items: stable)
+            self?.iconCacheVersion += 1
+        }
+    }
+
     /// The on-screen left-to-right order of a section right now (fallback when
     /// no explicit order exists yet).
     func currentOrder(in section: NookCore.Section) -> [ItemID] {
@@ -603,6 +626,21 @@ final class AppState {
                 byID[id] = ObservedItem(id: id, frame: nil, appName: "Separator")
             }
         }
+        // Model members that are momentarily neither observable nor in the
+        // engine's concealed set (mid-reveal AX latency, mid-conceal swap)
+        // still belong on the board — without this the section flashed empty
+        // on every tab revisit. Quit apps stay off (bundle not running).
+        let stored = Set(
+            settings.sectionModel.assignments.filter { $0.value == section }.map(\.key)
+        ).union(settings.sectionModel.order[section] ?? [])
+        for id in stored where byID[id] == nil {
+            guard let bundle = id.bundleID,
+                  bundle != Bundle.main.bundleIdentifier,
+                  !bundle.hasPrefix("com.apple."),
+                  let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first
+            else { continue }
+            byID[id] = ObservedItem(id: id, frame: nil, appName: app.localizedName)
+        }
         // Drop stale twins the concealed set may still remember: a bundle is
         // never half-concealed, so a frame-nil entry whose bundle has a live
         // item is an old alias, not a second icon. (Nook's own extras are
@@ -707,14 +745,12 @@ final class AppState {
                     lastSettleAt = Date()
                     // Reveals are the only window where hidden items are
                     // capturable — refresh the bar-glyph cache opportunistically.
-                    // Wait out the agent's slide animation and re-snapshot:
-                    // capturing at settle time crops mid-flight pixels against
-                    // final AX frames and the glyphs come out shredded.
-                    Task { [engine] in
-                        try? await Task.sleep(for: .milliseconds(450))
-                        let settled = await engine.snapshot()
-                        await ItemImageCache.prewarmBarCaptures(items: settled.items)
-                    }
+                    // Wait out the agent's slide animation, then require
+                    // FRAME STABILITY across two fresh AX walks: the cached
+                    // snapshot (or one mid-reflow) crops every glyph one slot
+                    // over — Velja wearing PopClip's icon. Unstable items are
+                    // skipped; a later pass gets them.
+                    captureStableBarGlyphs()
                     dispatch(rehide.handle(.transitionSettled))
                     settleCatchUp()
                     // Swipe-through hover: the pointer can be long gone by the
