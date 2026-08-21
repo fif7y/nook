@@ -72,7 +72,16 @@ fi
 
 echo "==> Generating Sparkle appcast"
 # generate_appcast ships in the Sparkle SPM artifact bundle; find it in DerivedData.
-GENERATE_APPCAST=$(find ~/Library/Developer/Xcode/DerivedData -path '*/artifacts/*/Sparkle/bin/generate_appcast' -print -quit 2>/dev/null || true)
+# Prefer the repo-local SPM artifacts (this build's own checkout) over a glob
+# across the shared user DerivedData — anything on this machine can write to
+# ~/Library/Developer/Xcode/DerivedData, and this binary gets handed the
+# update-signing key. (The tool is ad-hoc signed upstream, so a Team ID pin
+# isn't possible; path trust is the available control.)
+GENERATE_APPCAST="$REPO_ROOT/build/SourcePackages/artifacts/sparkle/Sparkle/bin/generate_appcast"
+if [[ ! -x "$GENERATE_APPCAST" ]]; then
+    GENERATE_APPCAST=$(find ~/Library/Developer/Xcode/DerivedData -path '*/artifacts/*/Sparkle/bin/generate_appcast' -print -quit 2>/dev/null || true)
+    [[ -n "$GENERATE_APPCAST" ]] && echo "warning: using generate_appcast from shared DerivedData: $GENERATE_APPCAST" >&2
+fi
 if [[ -n "$GENERATE_APPCAST" ]]; then
     # Signs with the EdDSA private key from the keychain (generate_keys), or
     # from a file when SPARKLE_KEY_FILE is set (CI).

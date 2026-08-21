@@ -69,6 +69,10 @@ jobs:
       - name: Build, notarize, package
         run: scripts/release.sh
 
+      - name: Remove Sparkle key file
+        if: always()
+        run: rm -f sparkle_key
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

@@ -53,13 +53,31 @@ final class ConcealGhostOverlay {
     /// True while a strip overlay is covering the bar — SeparatorManager and
     /// ExtrasManager skip their per-item ghosts (the strip already shows their
     /// glyphs; a second fading copy would double-expose).
-    private(set) static var stripActive = false
+    static var stripActive: Bool { currentStrip != nil }
+    /// The strip currently covering the bar. Instance-tracked, not a bool:
+    /// with back-to-back conceals, an OLDER strip's fade completion must not
+    /// clear the flag while a newer strip is still up.
+    private static weak var currentStrip: ConcealGhostOverlay?
 
     /// SCShareableContent lookup is the slow part (can be 100ms+) — cache the
     /// display handle so repeat conceals only pay for the capture itself.
+    /// Invalidated on display reconfiguration: a stale SCDisplay makes every
+    /// capture fail (no hide animation) or capture wrong geometry.
     private static var cachedDisplay: SCDisplay?
+    private static var reconfigureObserver: NSObjectProtocol?
 
     static func prewarmDisplay() {
+        if reconfigureObserver == nil {
+            reconfigureObserver = NotificationCenter.default.addObserver(
+                forName: NSApplication.didChangeScreenParametersNotification,
+                object: nil, queue: .main
+            ) { _ in
+                Task { @MainActor in
+                    cachedDisplay = nil
+                    _ = await display()
+                }
+            }
+        }
         Task { _ = await display() }
     }
 
@@ -134,7 +152,7 @@ final class ConcealGhostOverlay {
         window.contentView = imageView
         window.orderFrontRegardless()
         window.displayIfNeeded()
-        Self.stripActive = true
+        Self.currentStrip = self
         NookLog.log("ghost: strip up \(Int(capture.width))×\(Int(capture.height))")
         // Safety: never leave a stale cover if the caller's task dies.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
@@ -147,9 +165,13 @@ final class ConcealGhostOverlay {
     func fadeOut() {
         guard !finished else { return }
         finished = true
-        AlphaFade.run(imageView, to: 0, duration: 0.22, controlPoints: (0.55, 0, 0.8, 0.4)) { [window] in
+        AlphaFade.run(imageView, to: 0, duration: 0.22, controlPoints: (0.55, 0, 0.8, 0.4)) { [window, weak self] in
             window.orderOut(nil)
-            Self.stripActive = false
+            // Only the strip that is still current stands down the flag — an
+            // older strip finishing must not expose a newer one's cover.
+            if let self, Self.currentStrip === self {
+                Self.currentStrip = nil
+            }
         }
     }
 }

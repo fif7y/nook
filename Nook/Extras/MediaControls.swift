@@ -68,6 +68,7 @@ final class ExtrasManager {
             NSStatusBar.system.removeStatusItem(item)
             items.removeValue(forKey: id)
             specs.removeValue(forKey: id)
+            lastVisible.removeValue(forKey: id)
         }
         for spec in newSpecs {
             specs[spec.id] = spec
@@ -316,9 +317,23 @@ final class ExtrasManager {
 
     private func openAirDrop() {
         // Finder's AirDrop view via its keyboard shortcut (⇧⌘R) — the only
-        // stable public entry point.
+        // stable public entry point. The chord is posted globally, so ONLY
+        // post it once Finder actually owns the keyboard: on a slow
+        // activation the chord would land in whatever is frontmost instead
+        // (⇧⌘R is Reply-All in Mail, Reader in Safari…). Retry briefly, then
+        // give up silently.
         NSWorkspace.shared.open(URL(fileURLWithPath: "/System/Library/CoreServices/Finder.app"))
+        postAirDropChordWhenFinderFrontmost(attempt: 0)
+    }
+
+    private func postAirDropChordWhenFinderFrontmost(attempt: Int) {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            guard NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.apple.finder" else {
+                if attempt < 4 {
+                    self.postAirDropChordWhenFinderFrontmost(attempt: attempt + 1)
+                }
+                return
+            }
             let source = CGEventSource(stateID: .hidSystemState)
             for down in [true, false] {
                 let event = CGEvent(keyboardEventSource: source, virtualKey: 15 /* R */, keyDown: down)
@@ -343,8 +358,10 @@ final class ExtrasManager {
         let pipe = Pipe()
         process.standardOutput = pipe
         guard (try? process.run()) != nil else { return [] }
-        process.waitUntilExit()
+        // Read BEFORE waiting: with output past the 64KB pipe buffer, the
+        // child blocks on write and waitUntilExit never returns.
         let data = pipe.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
         return String(decoding: data, as: UTF8.self)
             .split(separator: "\n")
             .map(String.init)
@@ -379,6 +396,9 @@ final class CameraMicMonitor {
         timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
             self?.poll()
         }
+        // Indicators, not alarms — generous tolerance lets the system
+        // coalesce this wakeup with others instead of firing on its own.
+        timer?.tolerance = 0.5
         poll()
     }
 

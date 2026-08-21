@@ -31,13 +31,21 @@ enum ItemImageCache {
         let filter = SCContentFilter(display: display, excludingWindows: [])
         let config = SCStreamConfiguration()
         let scale = 2
+        // Capture ONLY the menu bar band, not the whole display: everything
+        // cropped below is inside it (the item filter already requires
+        // minY < 50), and a full-screen capture needlessly snapshots every
+        // visible window — a privacy overreach for a menu bar utility, and
+        // ~50× the pixels.
+        let bandHeight = 50
+        config.sourceRect = CGRect(x: 0, y: 0, width: display.width, height: bandHeight)
         config.width = display.width * scale
-        config.height = display.height * scale
+        config.height = bandHeight * scale
         config.showsCursor = false
         guard let shot = try? await SCScreenshotManager.captureImage(
             contentFilter: filter, configuration: config
         ) else { return }
         let pixelScale = CGFloat(shot.width) / CGFloat(display.width)
+        var captured = 0
         for item in items {
             guard let frame = item.frame,
                   frame.minY > -5, frame.minY < 50,  // main-display band only
@@ -53,8 +61,11 @@ enum ItemImageCache {
                   let glyph = keyedGlyph(from: crop, scale: pixelScale)
             else { continue }
             barCaptures[item.id.rawValue] = glyph
+            captured += 1
         }
-        NookLog.log("icons: prewarmed \(barCaptures.count) bar captures")
+        // No pruning: captures of currently-concealed items are the cache's
+        // value (a hover reveal only observes a subset). KB-scale worst case.
+        NookLog.log("icons: captured \(captured) this pass (\(barCaptures.count) cached)")
     }
 
     /// Screen crops carry the bar material (blurred wallpaper) behind the
@@ -66,14 +77,20 @@ enum ItemImageCache {
         let width = crop.width
         let height = crop.height
         guard width > 8, height > 8 else { return nil }
-        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        // Context-owned buffer (data: nil), read/written via bindMemory —
+        // `CGContext(data: &pixels, …)` kept using the inout pointer past the
+        // initializer call, which is formally undefined behavior.
         guard let ctx = CGContext(
-            data: &pixels, width: width, height: height,
+            data: nil, width: width, height: height,
             bitsPerComponent: 8, bytesPerRow: width * 4,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
-        ) else { return nil }
+        ), let base = ctx.data else { return nil }
         ctx.draw(crop, in: CGRect(x: 0, y: 0, width: width, height: height))
+        let pixels = UnsafeMutableBufferPointer(
+            start: base.bindMemory(to: UInt8.self, capacity: width * height * 4),
+            count: width * height * 4
+        )
 
         // Background = per-channel median of the 2px border ring.
         var reds: [UInt8] = [], greens: [UInt8] = [], blues: [UInt8] = []

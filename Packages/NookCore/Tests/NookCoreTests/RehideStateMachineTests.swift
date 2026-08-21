@@ -40,6 +40,39 @@ import Testing
         #expect(machine.state == .revealed(sections: [.hidden], reason: .click))
     }
 
+    @Test func midFlightTriggerRespectsClickElsewherePolicy() {
+        var machine = RehideStateMachine(policy: .init(rehideOnClickElsewhere: false))
+        _ = machine.handle(.revealRequested([.hidden], .click), now: now)
+        // Click elsewhere while the reveal is still applying: policy says no.
+        let effects = machine.handle(.trigger(.clickedElsewhere), now: now)
+        #expect(effects == [.none])
+        _ = machine.handle(.transitionSettled, now: now)
+        #expect(machine.state == .revealed(sections: [.hidden], reason: .click))
+    }
+
+    @Test func hoverRefireDoesNotCancelQueuedConceal() {
+        var machine = RehideStateMachine()
+        _ = machine.handle(.revealRequested([.hidden], .hover), now: now)
+        // Chevron click mid-reveal queues a conceal…
+        _ = machine.handle(.toggleRequested([.hidden], .click), now: now)
+        // …and a hover re-fire must not overwrite it.
+        _ = machine.handle(.revealRequested([.hidden], .hover), now: now)
+        let effects = machine.handle(.transitionSettled, now: now)
+        #expect(effects == [.conceal])
+    }
+
+    @Test func subsetRevealKeepsWiderSectionsAndReason() {
+        var machine = RehideStateMachine()
+        _ = machine.handle(.revealRequested([.hidden, .alwaysHidden], .doubleClick), now: now)
+        _ = machine.handle(.transitionSettled, now: now)
+        // A routine hover refresh for a subset must not narrow tracking or
+        // downgrade the deliberate reveal onto hover's quick clock.
+        _ = machine.handle(.revealRequested([.hidden], .hover), now: now)
+        #expect(machine.state == .revealed(sections: [.hidden, .alwaysHidden], reason: .doubleClick))
+        let left = machine.handle(.pointerLeft, now: now)
+        #expect(left == [.armTimer(now.addingTimeInterval(5))])
+    }
+
     @Test func midFlightRequestsQueueInsteadOfToggling() {
         var machine = RehideStateMachine()
         _ = machine.handle(.revealRequested([.hidden], .hover), now: now)

@@ -160,7 +160,7 @@ case "engine-test":
         await engine.start()
 
         let before = await engine.snapshot()
-        print("observed \(before.items.count) items; native overflow: \(before.nativeOverflowActive)")
+        print("observed \(before.items.count) items")
         let target = before.items.first { $0.id.bundleID == bundleToHide }
         guard let target else {
             print("FAIL: \(bundleToHide) not observed in the menubar")

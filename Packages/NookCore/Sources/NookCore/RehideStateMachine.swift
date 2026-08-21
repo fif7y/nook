@@ -98,9 +98,14 @@ public struct RehideStateMachine: Equatable, Sendable {
             state = .transitioning(target: .reveal(union, reason), queued: nil)
             return [.cancelTimer, .reveal(union)]
 
-        case (.revealed, .revealRequested(let sections, let reason)):
-            // Already showing these sections — just refresh the timer.
-            state = .revealed(sections: sections, reason: reason)
+        case (.revealed(let current, let reason), .revealRequested):
+            // Already showing these sections — just refresh the timer. Keep
+            // the WIDER tracked set and the original reason: a routine hover
+            // re-fire during a full [.hidden, .alwaysHidden] reveal must not
+            // narrow tracking (companion applies would hide always-hidden
+            // extras still physically on screen) or downgrade a deliberate
+            // reveal onto hover's quick rehide clock.
+            state = .revealed(sections: current, reason: reason)
             return armIfNeeded(now: now)
 
         case (.revealed, .toggleRequested):
@@ -118,7 +123,12 @@ public struct RehideStateMachine: Equatable, Sendable {
             return [.cancelTimer, .conceal]
 
         // ── Mid-flight: queue, never interleave ──────────────────────────────
-        case (.transitioning(let target, _), .revealRequested(let sections, let reason)):
+        case (.transitioning(let target, let queued), .revealRequested(let sections, let reason)):
+            // A hover re-fire must not cancel a deliberately queued conceal
+            // (chevron click mid-reveal) — that made the click a dead click.
+            if queued == .conceal, reason == .hover {
+                return [.none]
+            }
             state = .transitioning(target: target, queued: .reveal(sections, reason))
             return [.none]
 
@@ -133,8 +143,15 @@ public struct RehideStateMachine: Equatable, Sendable {
             state = .transitioning(target: target, queued: queued)
             return [.none]
 
-        case (.transitioning(let target, _), .concealRequested),
-             (.transitioning(let target, _), .trigger):
+        case (.transitioning(let target, _), .concealRequested):
+            state = .transitioning(target: target, queued: .conceal)
+            return [.none]
+
+        case (.transitioning(let target, _), .trigger(let trigger)):
+            // Same policy gate as the `.revealed` trigger case — a click
+            // elsewhere during a sub-second transition must respect
+            // `rehideOnClickElsewhere` too, not sneak past it.
+            guard shouldRehide(on: trigger) else { return [.none] }
             state = .transitioning(target: target, queued: .conceal)
             return [.none]
 

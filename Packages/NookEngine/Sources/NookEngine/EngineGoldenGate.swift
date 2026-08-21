@@ -70,6 +70,14 @@ public actor EngineGoldenGate: MenuBarEngine {
     }
     private var lastSnapshot: EngineSnapshot?
     private var started = false
+    /// Actor reentrancy guard: converge() suspends several times, and a stale
+    /// converge resuming after a newer one must not activate an outdated
+    /// assertion or stamp an outdated concealed set. Each converge takes a
+    /// ticket; any resume point where the ticket is no longer current aborts.
+    private var convergeEpoch = 0
+    /// When the last assertion swap was issued — teardown detection ignores
+    /// the settle window right after a swap (items take a beat to drop out).
+    private var lastSwapAt = Date.distantPast
 
     public init() {
         var continuation: AsyncStream<EngineEvent>.Continuation!
@@ -95,6 +103,8 @@ public actor EngineGoldenGate: MenuBarEngine {
         prefsWatcher = nil
         invalidateAssertion()
         started = false
+        // Ends any `for await` over `events` instead of hanging it forever.
+        eventContinuation.finish()
     }
 
     // MARK: - MenuBarEngine
@@ -132,9 +142,16 @@ public actor EngineGoldenGate: MenuBarEngine {
         // Desired left-to-right order: model order per section, sections laid
         // out as [alwaysHidden][hidden][visible] (hidden sections collapse
         // toward the left of the status area, matching the classic layout).
+        // Concealed items drop out of AX but are exactly the ones being
+        // ordered — union them in (frame nil sorts by explicit order only).
+        let liveIDs = Set(snapshot.items.map(\.id))
+        let concealedItems = snapshot.concealed.subtracting(liveIDs).map {
+            ObservedItem(id: $0, frame: nil, appName: nil)
+        }
+        let allItems = snapshot.items + concealedItems
         var orderedTags: [String] = []
         for section in [Section.alwaysHidden, .hidden, .visible] {
-            let sectionItems = snapshot.items
+            let sectionItems = allItems
                 .filter { model.section(of: $0.id) == section && !$0.id.isSystemModule }
             let explicit = model.order[section] ?? []
             let ranked = sectionItems.sorted { lhs, rhs in
@@ -184,7 +201,16 @@ public actor EngineGoldenGate: MenuBarEngine {
     /// allowlist from (model, revealedSections) and swaps the assertion in a
     /// single transition.
     private func converge() async {
+        convergeEpoch += 1
+        let epoch = convergeEpoch
         let snapshot = await refreshSnapshot()
+        guard epoch == convergeEpoch else { return }
+        // Running-app set: consulted by the stale prune below (quit apps) and
+        // the allowlist build. Fetched once, up front.
+        let runningBundles = await MainActor.run {
+            Set(NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier))
+        }
+        guard epoch == convergeEpoch else { return }
         // "Existing" = observed OR currently concealed by us. Concealed items
         // drop out of the AX tree entirely (macOS 27 single-window), so
         // computing from observation alone concludes "nothing to conceal",
@@ -200,13 +226,23 @@ public actor EngineGoldenGate: MenuBarEngine {
         let liveBundles = Set(snapshot.items.compactMap(\.id.bundleID))
         let ownBundle = Bundle.main.bundleIdentifier
         let carried = (lastSnapshot?.concealed ?? []).filter { id in
-            guard !liveIDs.contains(id),
-                  Self.systemItem(for: id) == nil,
-                  let bundle = id.bundleID, bundle != ownBundle,
-                  liveBundles.contains(bundle)
+            if liveIDs.contains(id) { return true }
+            guard Self.systemItem(for: id) == nil,
+                  let bundle = id.bundleID, bundle != ownBundle
             else { return true }
-            NookLog.log("converge: pruned stale concealed alias \(id.rawValue)")
-            return false
+            // Stale alias: the bundle re-enumerated live under a new tag.
+            if liveBundles.contains(bundle) {
+                NookLog.log("converge: pruned stale concealed alias \(id.rawValue)")
+                return false
+            }
+            // Quit app: concealed items are unobservable, but a bundle that is
+            // no longer running has no item at all — carrying it forever left
+            // ghost entries in every observer until relaunch.
+            if !runningBundles.contains(bundle) {
+                NookLog.log("converge: pruned concealed entry for quit app \(id.rawValue)")
+                return false
+            }
+            return true
         }
         let observedIDs = Array(liveIDs.union(carried))
         let concealable = model.concealableBundleIDs(
@@ -223,7 +259,9 @@ public actor EngineGoldenGate: MenuBarEngine {
         // System items assigned to a non-revealed section leave the system
         // allowlist — this is how Sound/battery/etc. become hideable.
         let hiddenSystem = Set(model.assignments.compactMap { id, section -> SystemItem? in
-            guard !revealedSections.contains(section) else { return nil }
+            // An explicit `.visible` assignment must never hide (the section
+            // is by definition never "revealed" — it's always on screen).
+            guard section != .visible, !revealedSections.contains(section) else { return nil }
             return Self.systemItem(for: id)
         })
         let allowedSystem = SystemItem.allCases.filter { !hiddenSystem.contains($0) }
@@ -232,7 +270,16 @@ public actor EngineGoldenGate: MenuBarEngine {
             // Nothing to hide and extras are allowed back: drop the assertion.
             invalidateAssertion()
             notifyReflowCompanion()
-            _ = await refreshSnapshot()
+            let after = await refreshSnapshot()
+            guard epoch == convergeEpoch else { return }
+            // Nothing is concealed now — clearing the carried set here stops
+            // observers from reporting phantom concealment until the next swap.
+            lastSnapshot = EngineSnapshot(
+                items: after.items,
+                concealed: [],
+                nativeOverflowActive: after.nativeOverflowActive,
+                takenAt: after.takenAt
+            )
             return
         }
         // With steadyExtras on, an empty concealable set still holds an
@@ -248,24 +295,38 @@ public actor EngineGoldenGate: MenuBarEngine {
                 allowedBundles.insert(bundle)
             }
         }
-        let runningBundles = await MainActor.run {
-            NSWorkspace.shared.runningApplications.compactMap(\.bundleIdentifier)
-        }
         for bundle in runningBundles where !concealable.contains(bundle) {
             allowedBundles.insert(bundle)
         }
+
+        // Teardown detection: a concealable bundle observed LIVE while our
+        // bookkeeping claims a matching assertion means macOS dropped the
+        // assertion externally — without this, the itemsChanged the
+        // reappearance triggers converges straight into the no-op guard and
+        // the wedge is permanent. Only trust the signal once the post-swap
+        // settle window (verify covers 3s) has passed, or the normal AX
+        // drop-out latency right after a swap would read as a violation.
+        let assertionLost = Date().timeIntervalSince(lastSwapAt) > 3
+            && snapshot.items.contains { item in
+                guard let bundle = item.id.bundleID else { return false }
+                return concealable.contains(bundle)
+            }
 
         // Idempotence: an equivalent state under a live assertion = already
         // converged. Skip the swap — this is what breaks event feedback loops.
         // Superset check (not equality): an app quitting leaves a harmless
         // stale allow entry and must not cause a swap; a NEW bundle missing
         // from the active allowlist must.
-        if assertion != nil,
+        if assertion != nil, !assertionLost,
            activeConcealable == concealable,
            activeSystemAllow == Set(allowedSystem.map(\.rawValue)),
            let activeAllowlist, activeAllowlist.isSuperset(of: allowedBundles) {
             NookLog.log("converge: no-op (concealable=\(concealable.count), allow=\(allowedBundles.count))")
             return
+        }
+        if assertionLost {
+            NookLog.log("converge: concealable items visible under live bookkeeping — assertion lost, re-swapping")
+            eventContinuation.yield(.assertionTornDown)
         }
         NookLog.log("converge: swapping — concealable=\(concealable.sorted()), allow=\(allowedBundles.count), revealed=\(revealedSections.count)")
 
@@ -281,27 +342,41 @@ public actor EngineGoldenGate: MenuBarEngine {
         // with the assertion swap it's about to animate.
         notifyReflowCompanion()
 
+        guard let handle else {
+            // No handle at all: keep the previous assertion alive (it still
+            // holds SOME hide state) and leave bookkeeping pointing at it —
+            // the next converge toward this target won't match the no-op
+            // guard, so retrying stays possible. Invalidating `previous` here
+            // used to kill the still-current assertion and wedge the state.
+            NookLog.log("converge: activation returned nil handle — keeping previous assertion")
+            eventContinuation.yield(.convergeFailed("assertion activation failed"))
+            return
+        }
+        assertion = handle
+        activeAllowlist = allowedBundles
+        activeConcealable = concealable
+        activeSystemAllow = Set(allowedSystem.map(\.rawValue))
+        lastSwapAt = Date()
         var activated = false
-        if let handle {
-            assertion = handle
-            activeAllowlist = allowedBundles
-            activeConcealable = concealable
-            activeSystemAllow = Set(allowedSystem.map(\.rawValue))
-            let deadline = Date().addingTimeInterval(3)
-            while Date() < deadline {
-                if let result = activationBox.result {
-                    activated = result
-                    break
-                }
-                try? await Task.sleep(for: .milliseconds(50))
+        let deadline = Date().addingTimeInterval(3)
+        while Date() < deadline {
+            if let result = activationBox.result {
+                activated = result
+                break
             }
+            try? await Task.sleep(for: .milliseconds(50))
         }
         // Swap order matters: activate the new state, then drop the old
         // assertion so there is no flash of everything-visible in between.
         previous?.invalidate()
+        guard epoch == convergeEpoch else { return }
 
         if !activated {
-            NookLog.log("converge: assertion activation FAILED (handle=\(handle == nil ? "nil" : "live"))")
+            NookLog.log("converge: assertion activation FAILED (dud completion)")
+            // The handle exists but activation never confirmed — the real hide
+            // state is unknown. Drop the allowlist bookkeeping so the next
+            // converge fails the no-op guard and re-swaps instead of wedging.
+            activeAllowlist = nil
             eventContinuation.yield(.convergeFailed("assertion activation failed"))
         } else {
             NookLog.log("converge: assertion active")
@@ -320,6 +395,7 @@ public actor EngineGoldenGate: MenuBarEngine {
         // 3s of verify polling made every queued transition — hover right
         // after a conceal, rapid toggles — wait a visible beat before moving.
         let after = await refreshSnapshot()
+        guard epoch == convergeEpoch else { return }
         lastSnapshot = EngineSnapshot(
             items: after.items,
             concealed: concealed,
@@ -348,6 +424,11 @@ public actor EngineGoldenGate: MenuBarEngine {
         }
         guard activeConcealable == concealable else { return }
         NookLog.log("converge: STILL VISIBLE after verify window")
+        // The assertion claims these bundles are hidden but reality disagrees
+        // (dud activation, or macOS tore the assertion down externally). Drop
+        // the allowlist bookkeeping so the next converge re-swaps instead of
+        // no-op'ing against bookkeeping that no longer reflects the bar.
+        activeAllowlist = nil
         eventContinuation.yield(.convergeFailed("concealed items still visible after verify window"))
     }
 
@@ -374,12 +455,14 @@ public actor EngineGoldenGate: MenuBarEngine {
 
     private func refreshSnapshot() async -> EngineSnapshot {
         let raw = await enumerator.snapshotItems()
-        let overflow = await enumerator.nativeOverflowVisible()
         let previousIDs = lastSnapshot.map { Set($0.items.map(\.id)) }
+        // nativeOverflowVisible() is a SECOND full AX tree walk and nothing in
+        // the app reads the flag (only nook-probe, which calls the enumerator
+        // directly). Stapling it to every snapshot doubled all AX traffic.
         let snapshot = EngineSnapshot(
             items: raw.map { ObservedItem(id: $0.id, frame: $0.frame, appName: $0.appName) },
             concealed: lastSnapshot?.concealed ?? [],
-            nativeOverflowActive: overflow,
+            nativeOverflowActive: false,
             takenAt: Date()
         )
         if let previousIDs, previousIDs != Set(raw.map(\.id)) {

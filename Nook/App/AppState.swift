@@ -50,7 +50,6 @@ final class AppState {
     private var bandMonitor: MenuBarBandMonitor?
     private var hotkey: HotkeyManager?
     private var eventTask: Task<Void, Never>?
-    private var applyOrderWork: Task<Void, Never>?
 
     // MARK: - Lifecycle
 
@@ -97,6 +96,7 @@ final class AppState {
             self?.toggle(reason: .hotkey)
         }
         hotkey.register(settings.hotkey)
+        registeredHotkey = settings.hotkey
         self.hotkey = hotkey
 
         eventTask = Task { [weak self] in
@@ -237,9 +237,14 @@ final class AppState {
         accessibilityGranted = AXIsProcessTrusted()
     }
 
-    /// Persist + apply a changed settings store.
+    private var settingsApplyWork: Task<Void, Never>?
+    private var registeredHotkey: HotkeySpec?
+
+    /// Persist + apply a changed settings store. Cheap, latency-sensitive
+    /// bits apply immediately; the save and the engine converge are debounced
+    /// — slider drags call this per tick, and each un-debounced tick paid a
+    /// JSON save plus a full AX-walking converge that concluded "no-op".
     func settingsChanged() {
-        settings.save()
         rehide.policy = settings.rehidePolicy
         if settings.showStatusItem, statusItem == nil {
             statusItem = NookStatusItem(appState: self)
@@ -247,7 +252,12 @@ final class AppState {
             statusItem?.remove()
             statusItem = nil
         }
-        hotkey?.register(settings.hotkey)
+        // Re-registering unregisters first — a per-tick re-register left the
+        // shortcut momentarily dead. Only touch it when it actually changed.
+        if settings.hotkey != registeredHotkey {
+            hotkey?.register(settings.hotkey)
+            registeredHotkey = settings.hotkey
+        }
         ItemImageCache.preferBarIcons = settings.editorIconStyle == .barIcons
         if settings.editorIconStyle == .barIcons {
             if !CGPreflightScreenCaptureAccess() {
@@ -274,9 +284,13 @@ final class AppState {
                 }
             }
         }
-        Task {
-            await engine.setSteadyExtras(settings.hideSystemExtras)
-            await engine.setModel(settings.sectionModel)
+        settingsApplyWork?.cancel()
+        settingsApplyWork = Task { [weak self] in
+            try? await Task.sleep(for: .milliseconds(300))
+            guard !Task.isCancelled, let self else { return }
+            self.settings.save()
+            await self.engine.setSteadyExtras(self.settings.hideSystemExtras)
+            await self.engine.setModel(self.settings.sectionModel)
         }
     }
 
@@ -294,8 +308,8 @@ final class AppState {
     // MARK: - Layout editor intents
 
     /// Move an item to `section`, inserted before `beforeID` (nil = append).
-    /// Updates assignment + explicit order, then schedules a physical
-    /// order-apply (debounced — the agent restart blinks the bar once).
+    /// Updates assignment + explicit order, then physically places the icon
+    /// via a synthetic ⌘-drag (no agent restart).
     func moveItem(_ id: ItemID, to section: NookCore.Section, before beforeID: ItemID?) {
         var model = settings.sectionModel
         if section == .visible {
@@ -335,6 +349,23 @@ final class AppState {
     /// first — measuring mid-reflow grabs stale coordinates, and a synthetic
     /// ⌘-drag released in the wrong place can fire system gestures.
     private func physicallyPlace(_ id: ItemID, in section: NookCore.Section) async {
+        // Synthetic drags post raw CGEvents with sleeps between them — two
+        // interleaved sequences corrupt each other (second mouse-down while
+        // the first drag's button is logically down, targets ping-ponging).
+        // Serialize every placement through one chain; callers spawn Tasks
+        // freely (editor drops, extras toggles, tidy) and each waits its turn.
+        let prior = placementChain
+        let task = Task { [weak self] in
+            await prior?.value
+            await self?.physicallyPlaceNow(id, in: section)
+        }
+        placementChain = task
+        await task.value
+    }
+
+    private var placementChain: Task<Void, Never>?
+
+    private func physicallyPlaceNow(_ id: ItemID, in section: NookCore.Section) async {
         try? await Task.sleep(for: .milliseconds(450))
         // Freshly-shown extras take a beat to be hosted — retry the lookup
         // briefly instead of giving up on the first stale snapshot.
@@ -402,18 +433,20 @@ final class AppState {
             case .visible: targetX = chevronFrame.maxX + 25
             }
         }
+        // Never approach screen corners (hot corners: Mission Control) or
+        // leave the trailing status area.
+        targetX = min(max(targetX, 200), screen.frame.maxX - 60)
         // The section's side of the chevron is a hard constraint — neighbor
         // midpoints can land across the boundary (e.g. first-of-Visible aims
         // "just left of its right neighbor", which is the chevron's far side).
+        // Applied LAST: the corner floor once pushed a hidden-section target
+        // right of a far-left chevron, dropping the item into the wrong side.
         switch section {
         case .visible:
             targetX = max(targetX, chevronFrame.maxX + 12)
         case .hidden, .alwaysHidden:
             targetX = min(targetX, chevronFrame.minX - 12)
         }
-        // Never approach screen corners (hot corners: Mission Control) or
-        // leave the trailing status area.
-        targetX = min(max(targetX, 200), screen.frame.maxX - 60)
 
         // Skip only when the item is genuinely at its slot already — a full
         // icon-width tolerance silently swallowed every one-slot move.
@@ -423,6 +456,14 @@ final class AppState {
             return
         }
 
+        // The drag must start inside the main display's menu bar band — a
+        // stale or foreign-display frame here would post a ⌘-click into
+        // whatever sits at that point on screen.
+        guard frame.minY > -5, frame.minY < 50,
+              frame.midX > 0, frame.midX < screen.frame.maxX else {
+            NookLog.log("place: source frame outside menu bar band (\(frame)) — skipping drag")
+            return
+        }
         NookLog.log("place: dragging \(id.rawValue) x=\(frame.midX) → \(targetX) (section \(section))")
         await ItemMover.cmdDrag(
             from: CGPoint(x: frame.midX, y: 12),
@@ -483,7 +524,14 @@ final class AppState {
             NookLog.log("tidy: done")
             tidying = false
             if !settingsWindowVisible {
-                concealNow()
+                // Same rule as settings-close: the pointer display's policy
+                // decides — an unconditional conceal collapsed the bar on
+                // "always show everything" displays.
+                if pointerDisplayBehavior == .alwaysShowAll {
+                    reveal([.hidden], reason: .displayPolicy)
+                } else {
+                    concealNow()
+                }
             }
         }
     }
@@ -616,17 +664,6 @@ final class AppState {
             if li != ri { return li < ri }
             return (lhs.frame?.minX ?? .greatestFiniteMagnitude)
                 < (rhs.frame?.minX ?? .greatestFiniteMagnitude)
-        }
-    }
-
-    private func scheduleApplyOrder() {
-        applyOrderWork?.cancel()
-        applyOrderWork = Task {
-            try? await Task.sleep(for: .seconds(1.5))
-            guard !Task.isCancelled else { return }
-            NookLog.log("editor: applying order (agent restart)")
-            await engine.applyOrder()
-            snapshot = await engine.snapshot()
         }
     }
 
@@ -865,8 +902,10 @@ final class AppState {
                 separators?.apply(model: settings.sectionModel, revealed: currentRevealedSections)
             }
         case .assertionTornDown:
-            // Recovery = schedule a converge through the normal path.
-            dispatch(rehide.handle(.concealRequested))
+            // Recovery: force a real converge. (A `.concealRequested` through
+            // the rehide machine was a no-op from `.concealed` — the exact
+            // state an external teardown usually finds us in.)
+            Task { await engine.setModel(settings.sectionModel) }
         case .availabilityChanged(let available):
             engineCanHide = available
         case .convergeFailed:

@@ -15,6 +15,10 @@ final class MenuBarBandMonitor {
     private var hoverTimer: Timer?
     private var pointerInBand = false
     private var cmdDragActive = false
+    /// A ⌘-drag happened since the last adoption pass. Band-exit adoption is
+    /// a catch-all for missed mouse-ups — but unconditionally snapshotting the
+    /// AX tree on EVERY top-edge graze was the tax; only drags change layout.
+    private var dragSinceAdoption = false
     private var lastDisplayUUID: String?
 
     init(appState: AppState) {
@@ -52,6 +56,7 @@ final class MenuBarBandMonitor {
             guard let screen, isInMenuBarBand(location, of: screen) else { return }
             if !cmdDragActive {
                 cmdDragActive = true
+                dragSinceAdoption = true
                 appState.pointerReturnedToBand()  // cancels any rehide countdown
                 NookLog.log("band: ⌘-drag started")
             }
@@ -62,7 +67,8 @@ final class MenuBarBandMonitor {
             // Give MenuBarAgent a beat to finalize the new position, then
             // adopt before rehide can run a stale conceal.
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
-                guard let appState = self?.appState else { return }
+                guard let self, let appState = self.appState else { return }
+                self.dragSinceAdoption = false
                 appState.adoptSectionsFromBar()
                 if appState.isRevealed {
                     appState.pointerLeftBand()  // re-arm the countdown
@@ -145,9 +151,12 @@ final class MenuBarBandMonitor {
             pointerInBand = false
             hoverTimer?.invalidate()
             // Leaving the band arms the countdown (never an instant conceal),
-            // and is the moment a finished ⌘-drag gets adopted into sections.
+            // and catches a ⌘-drag whose mouse-up the monitor missed.
             appState.pointerLeftBand()
-            appState.adoptSectionsFromBar()
+            if dragSinceAdoption {
+                dragSinceAdoption = false
+                appState.adoptSectionsFromBar()
+            }
         }
     }
 

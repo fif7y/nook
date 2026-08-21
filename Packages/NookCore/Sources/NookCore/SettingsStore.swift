@@ -185,22 +185,29 @@ public struct SettingsStore: Codable, Equatable, Sendable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = SettingsStore()
-        onboardingCompleted = try c.decodeIfPresent(Bool.self, forKey: .onboardingCompleted) ?? defaults.onboardingCompleted
-        launchAtLogin = try c.decodeIfPresent(Bool.self, forKey: .launchAtLogin) ?? defaults.launchAtLogin
-        showStatusItem = try c.decodeIfPresent(Bool.self, forKey: .showStatusItem) ?? defaults.showStatusItem
-        hotkey = try c.decodeIfPresent(HotkeySpec.self, forKey: .hotkey) ?? defaults.hotkey
-        revealTriggers = try c.decodeIfPresent(RevealTriggers.self, forKey: .revealTriggers) ?? defaults.revealTriggers
-        autoRehide = try c.decodeIfPresent(Bool.self, forKey: .autoRehide) ?? defaults.autoRehide
-        rehideDelay = try c.decodeIfPresent(TimeInterval.self, forKey: .rehideDelay) ?? defaults.rehideDelay
-        rehideOnClickElsewhere = try c.decodeIfPresent(Bool.self, forKey: .rehideOnClickElsewhere) ?? defaults.rehideOnClickElsewhere
-        hideSystemExtras = try c.decodeIfPresent(Bool.self, forKey: .hideSystemExtras) ?? defaults.hideSystemExtras
-        showMediaControls = try c.decodeIfPresent(Bool.self, forKey: .showMediaControls) ?? defaults.showMediaControls
-        extraItems = try c.decodeIfPresent([ExtraItemSpec].self, forKey: .extraItems) ?? defaults.extraItems
-        editorIconStyle = try c.decodeIfPresent(EditorIconStyle.self, forKey: .editorIconStyle) ?? defaults.editorIconStyle
-        sectionModel = try c.decodeIfPresent(SectionModel.self, forKey: .sectionModel) ?? defaults.sectionModel
-        separators = try c.decodeIfPresent([SeparatorSpec].self, forKey: .separators) ?? defaults.separators
-        displayTemplate = try c.decodeIfPresent(DisplayBehavior.self, forKey: .displayTemplate) ?? defaults.displayTemplate
-        displayOverrides = try c.decodeIfPresent([String: DisplayBehavior].self, forKey: .displayOverrides) ?? defaults.displayOverrides
+        // `try?` per field, not just decodeIfPresent: a present-but-invalid
+        // value (unknown enum case after a downgrade, hand-edited blob) throws
+        // out of decodeIfPresent, and one bad field must reset THAT field —
+        // not silently nuke every preference via load()'s outer `try?`.
+        func field<T: Decodable>(_ type: T.Type, _ key: CodingKeys, _ fallback: T) -> T {
+            ((try? c.decodeIfPresent(type, forKey: key)) ?? nil) ?? fallback
+        }
+        onboardingCompleted = field(Bool.self, .onboardingCompleted, defaults.onboardingCompleted)
+        launchAtLogin = field(Bool.self, .launchAtLogin, defaults.launchAtLogin)
+        showStatusItem = field(Bool.self, .showStatusItem, defaults.showStatusItem)
+        hotkey = ((try? c.decodeIfPresent(HotkeySpec.self, forKey: .hotkey)) ?? nil) ?? defaults.hotkey
+        revealTriggers = field(RevealTriggers.self, .revealTriggers, defaults.revealTriggers)
+        autoRehide = field(Bool.self, .autoRehide, defaults.autoRehide)
+        rehideDelay = field(TimeInterval.self, .rehideDelay, defaults.rehideDelay)
+        rehideOnClickElsewhere = field(Bool.self, .rehideOnClickElsewhere, defaults.rehideOnClickElsewhere)
+        hideSystemExtras = field(Bool.self, .hideSystemExtras, defaults.hideSystemExtras)
+        showMediaControls = field(Bool.self, .showMediaControls, defaults.showMediaControls)
+        extraItems = field([ExtraItemSpec].self, .extraItems, defaults.extraItems)
+        editorIconStyle = field(EditorIconStyle.self, .editorIconStyle, defaults.editorIconStyle)
+        sectionModel = field(SectionModel.self, .sectionModel, defaults.sectionModel)
+        separators = field([SeparatorSpec].self, .separators, defaults.separators)
+        displayTemplate = field(DisplayBehavior.self, .displayTemplate, defaults.displayTemplate)
+        displayOverrides = field([String: DisplayBehavior].self, .displayOverrides, defaults.displayOverrides)
     }
 
     // MARK: - Persistence
