@@ -27,6 +27,21 @@ fake bars, no icons jumping when the bar reflows.
 - **Signed updates** — Sparkle with EdDSA signatures, checked against a
   signed appcast.
 
+## How it works
+
+macOS 27's menu bar can hide items natively — it's the mechanism behind the
+system's assessment (exam lockdown) mode. Nook drives that mechanism directly:
+it asserts a configuration listing what should stay visible, and macOS itself
+hides the rest and reflows the bar. That's why hiding feels like part of the
+system — it *is* the system.
+
+The catch: this API lives in a **private Apple framework**
+(`MenuBarClientCore`). It isn't documented or guaranteed, so a macOS update
+could change or remove it. Nook resolves it at runtime and fails soft — if the
+API ever disappears, Nook simply reports hiding as unavailable rather than
+breaking your menu bar. Everything else (item positions, clicks, previews)
+uses public APIs: Accessibility and ScreenCaptureKit.
+
 ## Install
 
 Download the latest DMG from [Releases](https://github.com/fif7y/nook/releases),
@@ -68,6 +83,13 @@ convergence) — each with its own test suite:
 swift test --package-path Packages/NookCore
 swift test --package-path Packages/NookEngine
 ```
+
+## Licenses & acknowledgements
+
+Nook's only third-party dependency is
+[Sparkle](https://github.com/sparkle-project/Sparkle) (in-app updates), used
+under the [MIT-style Sparkle license](https://github.com/sparkle-project/Sparkle/blob/2.x/LICENSE).
+Everything else is custom code on top of Apple's system frameworks.
 
 ## License
 

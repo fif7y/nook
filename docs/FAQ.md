@@ -35,6 +35,20 @@ macOS mirrors the same items on every display, so layouts are global. What
 *is* per-display is behavior: set a display to “always show” or “collapse”,
 and whichever display your pointer is on wins.
 
+**Does Nook use private APIs?**
+One, deliberately: the hide/show mechanism itself. macOS 27 can hide menu bar
+items natively (it's how the system's assessment/exam mode works), but the API
+lives in a private framework (`MenuBarClientCore`) with no public equivalent.
+Nook resolves it at runtime and fails soft — if a macOS update changes or
+removes it, Nook reports hiding as unavailable instead of misbehaving, and
+macOS restores the bar on its own (the hide assertion is process-bound).
+Everything else uses public APIs. This is also why Nook can't be on the App
+Store.
+
+**Could a macOS update break Nook?**
+It could — see above. The failure mode is graceful (icons just stay visible),
+and updates ship through Sparkle, so a fix arrives without you doing anything.
+
 **Is Nook sandboxed?**
 No — managing the menu bar requires APIs the App Store sandbox forbids. Nook
 is notarized by Apple, ships with the hardened runtime, and updates are signed
