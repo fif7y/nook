@@ -44,7 +44,7 @@ xcodebuild -exportArchive \
 
 APP="$BUILD_DIR/export/Nook.app"
 codesign --verify --deep --strict "$APP"
-echo "==> Signature OK: $(codesign -dv "$APP" 2>&1 | grep '^Authority' | head -1)"
+echo "==> Signature OK: $(codesign -dvv "$APP" 2>&1 | grep '^Authority' | head -1)"
 
 if [[ -z "${SKIP_NOTARIZE:-}" ]]; then
     echo "==> Notarizing app"
