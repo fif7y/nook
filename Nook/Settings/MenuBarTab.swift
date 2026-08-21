@@ -24,20 +24,6 @@ struct MenuBarTab: View {
                 }
 
                 HStack {
-                    Picker("", selection: Binding(
-                        get: { appState.settings.editorIconStyle },
-                        set: { style in
-                            appState.settings.editorIconStyle = style
-                            appState.settingsChanged()
-                        }
-                    )) {
-                        Text("App icons").tag(EditorIconStyle.appIcons)
-                        Text("Menu bar icons").tag(EditorIconStyle.barIcons)
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .fixedSize()
-                    .help("Menu bar icons show the actual glyphs from your bar — requires Screen Recording access, captured only while items are revealed.")
                     Spacer()
                     Button {
                         appState.tidyBar()
@@ -153,15 +139,8 @@ private struct EditorSectionView: View {
                 if appState.settings.sectionModel.newItemsDestination == section {
                     NewItemsChip()
                 }
-                // iconStyle is passed down so the tiles re-render on toggle —
-                // reading it only inside the image cache invalidates nothing.
                 ForEach(items, id: \.id.rawValue) { item in
-                    ItemTile(
-                        item: item,
-                        section: section,
-                        iconStyle: appState.settings.editorIconStyle,
-                        iconVersion: appState.iconCacheVersion
-                    )
+                    ItemTile(item: item, section: section)
                 }
                 // Trailing landing slot: appears while a chip hovers the row
                 // itself (append position).
@@ -251,11 +230,6 @@ private struct ItemTile: View {
     @Environment(AppState.self) private var appState
     let item: ObservedItem
     let section: NookCore.Section
-    let iconStyle: EditorIconStyle
-    /// Bar-glyph captures land asynchronously after a reveal settles;
-    /// ItemImageCache itself is not observable, so this version input is
-    /// what re-renders the tile once a fresh capture exists.
-    let iconVersion: Int
     @State private var hovered = false
     @State private var targeted = false
 

@@ -13,10 +13,6 @@ final class AppState {
     var settings = SettingsStore.load()
     private(set) var snapshot: EngineSnapshot?
     private(set) var accessibilityGranted = AXIsProcessTrusted()
-    /// Bumped when the bar-glyph capture cache gains fresh entries —
-    /// ItemImageCache is not observable, so editor tiles read this to
-    /// re-render once better captures land.
-    var iconCacheVersion = 0
     private(set) var engineCanHide = true
     /// While the settings window is open, auto-rehide is fully suppressed —
     /// the user is mid-workflow between the editor and the bar, and nothing
@@ -72,7 +68,6 @@ final class AppState {
 
         rehide.policy = settings.rehidePolicy
         engineCanHide = engine.capabilities.canHide
-        ItemImageCache.preferBarIcons = settings.editorIconStyle == .barIcons
         NookLog.log("start: axTrusted=\(AXIsProcessTrusted()) canHide=\(engineCanHide) assignments=\(settings.sectionModel.assignments.count)")
         SparkleController.shared.start()
 
@@ -274,17 +269,6 @@ final class AppState {
             hotkey?.register(settings.hotkey)
             registeredHotkey = settings.hotkey
         }
-        ItemImageCache.preferBarIcons = settings.editorIconStyle == .barIcons
-        if settings.editorIconStyle == .barIcons {
-            if !CGPreflightScreenCaptureAccess() {
-                // System prompt (once); the style degrades to app icons until
-                // granted — and macOS often applies the grant only after the
-                // app relaunches.
-                CGRequestScreenCaptureAccess()
-            } else {
-                captureStableBarGlyphs()
-            }
-        }
         separators?.sync(with: settings.separators)
         // Newly toggled-on extras get hosted wherever macOS pleases (left end
         // of the trailing area) — physically place them into their section
@@ -382,7 +366,6 @@ final class AppState {
             guard let self, !Task.isCancelled else { return }
             await self.engine.applyOrder()
             self.snapshot = await self.engine.snapshot()
-            self.captureStableBarGlyphs()
         }
     }
 
@@ -464,9 +447,6 @@ final class AppState {
                 await engine.applyOrder()
                 snapshot = await engine.snapshot()
             }
-            // Positions changed wholesale — stale glyph crops would wear
-            // their old neighbor's icon.
-            captureStableBarGlyphs()
         }
     }
 
@@ -652,9 +632,6 @@ final class AppState {
             placed = landedInSlot(after)
             NookLog.log("place: retry landed at x=\(after.items.first(where: { $0.id == id })?.frame?.midX ?? -1) verified=\(placed)")
         }
-        // The move invalidated any glyph captured at the old position (a
-        // stale crop shows the neighbor's icon) — refresh once settled.
-        captureStableBarGlyphs()
         // The drag clicked outside Nook — hand focus back to the settings
         // window. Retried: the dragged icon's app can win an activation race
         // hundreds of ms later and steal focus back from a single attempt.
@@ -668,36 +645,6 @@ final class AppState {
             }
         }
         return placed
-    }
-
-    /// Capture bar glyphs once the bar is genuinely still: wait out the
-    /// agent's slide animation, then require frame stability across two
-    /// fresh AX walks — cropping against a moving (or stale-cached) frame
-    /// set shifts every glyph one slot over (Velja wearing PopClip's icon).
-    /// Unstable items are skipped; a later pass gets them.
-    private func captureStableBarGlyphs() {
-        Task { [engine, weak self] in
-            try? await Task.sleep(for: .milliseconds(450))
-            let first = await engine.freshSnapshot()
-            try? await Task.sleep(for: .milliseconds(120))
-            let second = await engine.freshSnapshot()
-            var stable = second.items.filter { item in
-                first.items.contains { $0.id == item.id && $0.frame == item.frame }
-            }
-            // Notch guard: only frames inside the status-item region right
-            // of the notch are real pixels — an item macOS pushed under or
-            // left of the notch keeps a frame but renders nothing, and its
-            // crop caches garbage (Velja wearing a « strip). Skipped items
-            // keep their app-icon fallback until captured at a sane spot.
-            if let area = NSScreen.screens.first?.auxiliaryTopRightArea {
-                stable = stable.filter { item in
-                    guard let f = item.frame else { return false }
-                    return f.minX >= area.minX - 1 && f.maxX <= area.maxX + 1
-                }
-            }
-            await ItemImageCache.prewarmBarCaptures(items: stable)
-            self?.iconCacheVersion += 1
-        }
     }
 
     /// The on-screen left-to-right order of a section right now (fallback when
@@ -735,7 +682,6 @@ final class AppState {
                 await engine.applyOrder()
                 snapshot = await engine.snapshot()
             }
-            captureStableBarGlyphs()
             NookLog.log("tidy: done")
             tidying = false
             if !settingsWindowVisible {
@@ -918,14 +864,6 @@ final class AppState {
                     snapshot = await engine.snapshot()
                     NookLog.log("effect reveal settled")
                     lastSettleAt = Date()
-                    // Reveals are the only window where hidden items are
-                    // capturable — refresh the bar-glyph cache opportunistically.
-                    // Wait out the agent's slide animation, then require
-                    // FRAME STABILITY across two fresh AX walks: the cached
-                    // snapshot (or one mid-reflow) crops every glyph one slot
-                    // over — Velja wearing PopClip's icon. Unstable items are
-                    // skipped; a later pass gets them.
-                    captureStableBarGlyphs()
                     dispatch(rehide.handle(.transitionSettled))
                     settleCatchUp()
                     // Newcomers routed into a then-concealed section finally

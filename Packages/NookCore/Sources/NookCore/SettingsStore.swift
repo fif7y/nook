@@ -119,13 +119,6 @@ public struct ExtraItemSpec: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
-public enum EditorIconStyle: String, Codable, CaseIterable, Sendable {
-    /// Owning app's icon — no permissions needed.
-    case appIcons
-    /// The actual menubar glyphs, captured live — needs Screen Recording.
-    case barIcons
-}
-
 public struct SettingsStore: Codable, Equatable, Sendable {
     public var onboardingCompleted: Bool = false
     public var launchAtLogin: Bool = false
@@ -149,8 +142,6 @@ public struct SettingsStore: Codable, Equatable, Sendable {
     /// Nook-owned proxy items ("Nook items"): section-manageable replacements
     /// for the collateral-hidden system extras, plus user shortcut buttons.
     public var extraItems: [ExtraItemSpec] = []
-
-    public var editorIconStyle: EditorIconStyle = .appIcons
 
     public var sectionModel = SectionModel()
     public var separators: [SeparatorSpec] = []
@@ -178,7 +169,7 @@ public struct SettingsStore: Codable, Equatable, Sendable {
     private enum CodingKeys: String, CodingKey {
         case onboardingCompleted, launchAtLogin, showStatusItem, hotkey
         case revealTriggers, autoRehide, rehideDelay, rehideOnClickElsewhere
-        case hideSystemExtras, showMediaControls, extraItems, editorIconStyle, sectionModel, separators
+        case hideSystemExtras, showMediaControls, extraItems, sectionModel, separators
         case displayTemplate, displayOverrides
     }
 
@@ -203,7 +194,6 @@ public struct SettingsStore: Codable, Equatable, Sendable {
         hideSystemExtras = field(Bool.self, .hideSystemExtras, defaults.hideSystemExtras)
         showMediaControls = field(Bool.self, .showMediaControls, defaults.showMediaControls)
         extraItems = field([ExtraItemSpec].self, .extraItems, defaults.extraItems)
-        editorIconStyle = field(EditorIconStyle.self, .editorIconStyle, defaults.editorIconStyle)
         sectionModel = field(SectionModel.self, .sectionModel, defaults.sectionModel)
         separators = field([SeparatorSpec].self, .separators, defaults.separators)
         displayTemplate = field(DisplayBehavior.self, .displayTemplate, defaults.displayTemplate)
