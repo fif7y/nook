@@ -88,4 +88,8 @@ public protocol MenuBarEngine: Actor {
     func applyOrder() async -> [String]
     /// Click a (possibly concealed) item without changing reveal state.
     func click(_ item: ItemID, rightClick: Bool) async -> Bool
+    /// True when no assertion swap has been issued for `interval` seconds —
+    /// the agent's animation passes ride each swap, so swap-quiet means the
+    /// bar has stopped moving. Overlay covers hold until this turns true.
+    func quiesced(for interval: TimeInterval) async -> Bool
 }

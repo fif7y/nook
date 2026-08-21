@@ -119,6 +119,18 @@ public struct ExtraItemSpec: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// How concealed icons come back on reveal. Conceal always fades (the agent
+/// pops items off with no animation; Nook's ghost overlay manufactures the
+/// hide motion) — this only styles the reveal side.
+public enum RevealAnimation: String, Codable, CaseIterable, Sendable {
+    /// No animation — icons appear in place once the swap lands.
+    case instant
+    /// The agent's own slide-in (the OS default).
+    case smooth
+    /// Fade in place — a cover over the strip fades away after the swap.
+    case fade
+}
+
 public struct SettingsStore: Codable, Equatable, Sendable {
     public var onboardingCompleted: Bool = false
     public var launchAtLogin: Bool = false
@@ -129,6 +141,8 @@ public struct SettingsStore: Codable, Equatable, Sendable {
     public var autoRehide: Bool = true
     public var rehideDelay: TimeInterval = 5
     public var rehideOnClickElsewhere: Bool = true
+
+    public var revealAnimation: RevealAnimation = .smooth
 
     /// Hold the hide-assertion even while revealed (allowlist just widens).
     /// Keeps macOS's collateral extras (Now Playing, camera pill, AirDrop…)
@@ -168,7 +182,7 @@ public struct SettingsStore: Codable, Equatable, Sendable {
 
     private enum CodingKeys: String, CodingKey {
         case onboardingCompleted, launchAtLogin, showStatusItem, hotkey
-        case revealTriggers, autoRehide, rehideDelay, rehideOnClickElsewhere
+        case revealTriggers, autoRehide, rehideDelay, rehideOnClickElsewhere, revealAnimation
         case hideSystemExtras, showMediaControls, extraItems, sectionModel, separators
         case displayTemplate, displayOverrides
     }
@@ -191,6 +205,7 @@ public struct SettingsStore: Codable, Equatable, Sendable {
         autoRehide = field(Bool.self, .autoRehide, defaults.autoRehide)
         rehideDelay = field(TimeInterval.self, .rehideDelay, defaults.rehideDelay)
         rehideOnClickElsewhere = field(Bool.self, .rehideOnClickElsewhere, defaults.rehideOnClickElsewhere)
+        revealAnimation = field(RevealAnimation.self, .revealAnimation, defaults.revealAnimation)
         hideSystemExtras = field(Bool.self, .hideSystemExtras, defaults.hideSystemExtras)
         showMediaControls = field(Bool.self, .showMediaControls, defaults.showMediaControls)
         extraItems = field([ExtraItemSpec].self, .extraItems, defaults.extraItems)

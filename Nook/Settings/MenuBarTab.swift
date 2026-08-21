@@ -13,7 +13,8 @@ struct MenuBarTab: View {
 
     var body: some View {
         // No own ScrollView — the settings shell provides scrolling + padding.
-        VStack(alignment: .leading, spacing: 14) {
+        // Generous section rhythm — whitespace is structure, not waste.
+        VStack(alignment: .leading, spacing: 30) {
             if !appState.engineCanHide {
                     Label(
                         "Hiding is unavailable on this macOS build — reordering still works.",
@@ -59,28 +60,24 @@ struct MenuBarTab: View {
 
                 // The "New" chip above is the same setting made draggable —
                 // this row is its discoverable, labeled twin.
-                HStack(spacing: 8) {
+                HStack(spacing: 10) {
                     Text("New menu bar icons go to")
                         .font(.callout)
-                    Picker("", selection: Binding(
+                    NookSegments(selection: Binding(
                         get: { appState.settings.sectionModel.newItemsDestination },
                         set: { destination in
                             appState.settings.sectionModel.newItemsDestination = destination
                             appState.settingsChanged()
                         }
-                    )) {
-                        Text("Visible").tag(NookCore.Section.visible)
-                        Text("Hidden").tag(NookCore.Section.hidden)
-                        Text("Always hidden").tag(NookCore.Section.alwaysHidden)
-                    }
-                    .pickerStyle(.menu)
-                    .labelsHidden()
-                    .fixedSize()
+                    ), options: [
+                        (.visible, "Visible"),
+                        (.hidden, "Hidden"),
+                        (.alwaysHidden, "Always hidden"),
+                    ])
                     Spacer()
                 }
 
                 NookItemsStrip()
-                    .padding(.top, 6)
 
                 SeparatorStrip()
         }
@@ -395,7 +392,7 @@ private struct NookItemsStrip: View {
                 }
             }
 
-            VStack(alignment: .leading, spacing: 6) {
+            VStack(alignment: .leading, spacing: 12) {
                 NookItemRow(
                     symbol: "playpause.fill", title: "Media controls",
                     caption: "Shows while audio plays (lingers a few minutes after) — click plays/pauses, right-click for tracks",
@@ -434,7 +431,7 @@ private struct NookItemsStrip: View {
                     .padding(.vertical, 2)
                 }
             }
-            .padding(10)
+            .padding(14)
             .background(RoundedRectangle(cornerRadius: 12).fill(.quaternary.opacity(0.35)))
         }
     }

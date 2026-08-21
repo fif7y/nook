@@ -57,7 +57,7 @@ struct SettingsView: View {
     @ViewBuilder
     private var content: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: 24) {
                 Text(appState.settingsTab.rawValue)
                     .font(.system(size: 22, weight: .semibold))
                     .padding(.bottom, 2)
@@ -68,8 +68,8 @@ struct SettingsView: View {
                 case .about: AboutPane()
                 }
             }
-            .padding(24)
-            .padding(.top, 14)
+            .padding(28)
+            .padding(.top, 16)
             .frame(maxWidth: 640, alignment: .leading)
             .frame(maxWidth: .infinity, alignment: .leading)
         }
@@ -124,6 +124,55 @@ private struct SidebarRow: View {
                         : .primary.opacity(hovered ? 0.06 : 0))
             )
             .contentShape(RoundedRectangle(cornerRadius: 7))
+        }
+        .buttonStyle(.plain)
+        .focusEffectDisabled()
+        .onHover { hovered = $0 }
+    }
+}
+
+// MARK: - Segments
+
+/// De-boxed button group: soft-fill track, the selected chip carried by the
+/// amber accent — every option visible at once, no menu to open.
+struct NookSegments<T: Hashable>: View {
+    @Binding var selection: T
+    let options: [(T, String)]
+
+    var body: some View {
+        HStack(spacing: 2) {
+            ForEach(options, id: \.0) { value, label in
+                NookSegmentButton(label: label, selected: selection == value) {
+                    selection = value
+                }
+            }
+        }
+        .padding(3)
+        .background(RoundedRectangle(cornerRadius: 9).fill(.quaternary.opacity(0.35)))
+        .animation(.spring(duration: 0.22), value: selection)
+    }
+}
+
+private struct NookSegmentButton: View {
+    let label: String
+    let selected: Bool
+    let action: () -> Void
+    @State private var hovered = false
+
+    var body: some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 12, weight: selected ? .semibold : .regular))
+                .foregroundStyle(selected ? NookAccent.amber : .secondary)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 4)
+                .background(
+                    RoundedRectangle(cornerRadius: 6)
+                        .fill(selected
+                            ? NookAccent.amber.opacity(0.16)
+                            : .primary.opacity(hovered ? 0.06 : 0))
+                )
+                .contentShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
         .focusEffectDisabled()
@@ -249,6 +298,13 @@ private struct GeneralPane: View {
             }
             SettingToggleRow(title: "Reveal on click in empty menu bar area", isOn: binding(\.revealTriggers.clickEnabled))
             SettingToggleRow(title: "Double-click reveals always-hidden too", isOn: binding(\.revealTriggers.doubleClickForAlwaysHidden))
+            SettingRow(title: "Reveal animation") {
+                NookSegments(selection: binding(\.revealAnimation), options: [
+                    (.instant, "Instant"),
+                    (.smooth, "Smooth"),
+                    (.fade, "Fade"),
+                ])
+            }
         }
 
         SettingsCard(title: "Auto-rehide") {

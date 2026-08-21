@@ -157,6 +157,10 @@ public actor EngineGoldenGate: MenuBarEngine {
         await converge()
     }
 
+    public func quiesced(for interval: TimeInterval) -> Bool {
+        Date().timeIntervalSince(lastSwapAt) > interval
+    }
+
     /// Returns the written tags so callers can detect a post-restart re-mint
     /// (a live tag absent from the written set never got a slot).
     @discardableResult

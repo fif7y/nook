@@ -99,7 +99,7 @@ final class ConcealGhostOverlay {
     /// the snapshot up at full alpha. Returns nil when capture is unavailable
     /// — the conceal then runs uncovered, never blocked. Call `fadeOut()` once
     /// the swap beneath has been issued; a safety timeout fades regardless.
-    static func begin(over rect: CGRect?) async -> ConcealGhostOverlay? {
+    static func begin(over rect: CGRect?, safety: TimeInterval = 0.5) async -> ConcealGhostOverlay? {
         guard
             let rect, rect.width > 8,
             CGPreflightScreenCaptureAccess(),
@@ -127,10 +127,10 @@ final class ConcealGhostOverlay {
             NookLog.log("ghost: strip capture failed — conceal runs uncovered")
             return nil
         }
-        return ConcealGhostOverlay(shot: shot, capture: capture, primary: primary)
+        return ConcealGhostOverlay(shot: shot, capture: capture, primary: primary, safety: safety)
     }
 
-    private init(shot: CGImage, capture: CGRect, primary: NSScreen) {
+    private init(shot: CGImage, capture: CGRect, primary: NSScreen, safety: TimeInterval) {
         // AX top-left → Cocoa bottom-left.
         let frame = NSRect(
             x: capture.minX,
@@ -155,16 +155,39 @@ final class ConcealGhostOverlay {
         Self.currentStrip = self
         NookLog.log("ghost: strip up \(Int(capture.width))×\(Int(capture.height))")
         // Safety: never leave a stale cover if the caller's task dies.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+        DispatchQueue.main.asyncAfter(deadline: .now() + safety) { [weak self] in
             self?.fadeOut()
         }
     }
 
-    /// Fade the cover out — ease-in (holds visibility, then accelerates away),
-    /// the mirror of the show fade's ease-out. Idempotent.
-    func fadeOut() {
+    /// Drop the cover with no animation — the Instant reveal style: whatever
+    /// landed beneath simply is, from one frame to the next. Idempotent.
+    func dismiss() {
         guard !finished else { return }
         finished = true
+        window.orderOut(nil)
+        if Self.currentStrip === self {
+            Self.currentStrip = nil
+        }
+    }
+
+    /// Fade the cover out — ease-in (holds visibility, then accelerates away),
+    /// the mirror of the show fade's ease-out. Idempotent. `slide` adds a
+    /// rightward drift toward the chevron — the Smooth style's manufactured
+    /// tuck-away, mirroring the agent's slide-in on reveal.
+    func fadeOut(slide: Bool = false) {
+        guard !finished else { return }
+        finished = true
+        if slide, let layer = imageView.layer {
+            let shift = min(imageView.bounds.width * 0.5, 80)
+            let anim = CABasicAnimation(keyPath: "position.x")
+            anim.fromValue = layer.position.x
+            anim.toValue = layer.position.x + shift
+            anim.duration = 0.22
+            anim.timingFunction = CAMediaTimingFunction(controlPoints: 0.55, 0, 0.8, 0.4)
+            layer.add(anim, forKey: "nookSlideOut")
+            layer.position.x += shift
+        }
         AlphaFade.run(imageView, to: 0, duration: 0.22, controlPoints: (0.55, 0, 0.8, 0.4)) { [window, weak self] in
             window.orderOut(nil)
             // Only the strip that is still current stands down the flag — an

@@ -215,6 +215,10 @@ final class AppState {
     /// a frame. Nil when nothing concealable is showing. Re-snapshots: AX
     /// lists freshly revealed items progressively, and the settle-time
     /// snapshot can be missing half the strip.
+    /// Where the concealed strip last sat — icons reappear in the same spot,
+    /// so this rect is the reveal cover's footprint (Instant/Fade styles).
+    private var lastConcealedStripRect: CGRect?
+
     private func concealStripFrames() async -> CGRect? {
         let snap = await engine.snapshot()
         var union: CGRect?
@@ -863,9 +867,47 @@ final class AppState {
                 break
             case .reveal(let sections):
                 Task {
-                    NookLog.log("effect reveal \(sections) → engine")
+                    // Instant/Fade styles: the agent's slide-in is the only
+                    // reveal animation the OS offers — a snapshot of the
+                    // still-empty strip covers the slide, then pops (Instant)
+                    // or fades (Fade) away once the swap lands. The strip rect
+                    // is remembered from the last conceal (icons reappear
+                    // where they left); no memory yet → the slide shows.
+                    var cover: ConcealGhostOverlay?
+                    if settings.revealAnimation != .smooth {
+                        // The strip's width drifts between conceals (items
+                        // come and go while hidden), so the remembered rect
+                        // can under-cover — icons at the group's edges then
+                        // slide in plain view. Pad generously: left is the
+                        // slide origin (empty bar in the snapshot, free to
+                        // cover), right catches the visible cluster shifting.
+                        let coverRect = lastConcealedStripRect.map {
+                            CGRect(
+                                x: $0.minX - 120, y: $0.minY,
+                                width: $0.width + 180, height: $0.height
+                            )
+                        }
+                        cover = await ConcealGhostOverlay.begin(
+                            over: coverRect, safety: 2.5
+                        )
+                    }
+                    NookLog.log("effect reveal \(sections) → engine (anim=\(settings.revealAnimation.rawValue), cover=\(cover != nil))")
                     await engine.reveal(sections)
                     snapshot = await engine.snapshot()
+                    if let cover {
+                        // Hold until the engine is swap-quiet: under rapid
+                        // hover cycles the real swap can land AFTER the settle
+                        // report (epoch-guard race), and the agent animates
+                        // each swap — a timed grace popped the cover mid-slide.
+                        let fade = settings.revealAnimation == .fade
+                        Task { @MainActor in
+                            let deadline = Date().addingTimeInterval(2)
+                            while Date() < deadline, await !engine.quiesced(for: 0.2) {
+                                try? await Task.sleep(for: .milliseconds(50))
+                            }
+                            if fade { cover.fadeOut() } else { cover.dismiss() }
+                        }
+                    }
                     NookLog.log("effect reveal settled")
                     lastSettleAt = Date()
                     dispatch(rehide.handle(.transitionSettled))
@@ -889,11 +931,29 @@ final class AppState {
                     // Cover the strip BEFORE the swap: the agent pops
                     // concealed items with no animation, so the overlay is
                     // the hide animation. Fades once the swap has landed.
-                    let ghost = await ConcealGhostOverlay.begin(over: await concealStripFrames())
+                    // Instant style skips the cover — the pop IS the look.
+                    let strip = await concealStripFrames()
+                    lastConcealedStripRect = strip
+                    let ghost = settings.revealAnimation == .instant
+                        ? nil
+                        : await ConcealGhostOverlay.begin(over: strip, safety: 2.5)
                     NookLog.log("effect conceal → engine")
                     await engine.conceal()
                     snapshot = await engine.snapshot()
-                    ghost?.fadeOut()
+                    if let ghost {
+                        // Same swap-quiet hold as the reveal cover: a late
+                        // second swap after the ghost fades reads as a bounce.
+                        // Exit mirrors the entry style — Smooth tucks toward
+                        // the chevron, Fade dissolves in place.
+                        let slide = settings.revealAnimation == .smooth
+                        Task { @MainActor in
+                            let deadline = Date().addingTimeInterval(2)
+                            while Date() < deadline, await !engine.quiesced(for: 0.2) {
+                                try? await Task.sleep(for: .milliseconds(50))
+                            }
+                            ghost.fadeOut(slide: slide)
+                        }
+                    }
                     NookLog.log("effect conceal settled")
                     lastSettleAt = Date()
                     dispatch(rehide.handle(.transitionSettled))
