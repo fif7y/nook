@@ -468,27 +468,52 @@ private struct AboutPane: View {
     }
 
     /// Inline update state — no "you're up to date" alert; the pane just
-    /// shows it. The button only appears when there is something to install,
-    /// and hands off to Sparkle's standard flow.
+    /// shows it. One capsule chip per state (de-box: tinted fill, no
+    /// borders); only "update available" is a true CTA and gets the solid
+    /// accent fill.
     @ViewBuilder private var updateRow: some View {
         switch SparkleController.shared.status {
         case .available(let version):
-            Button("Update to \(version)") {
+            Button {
                 SparkleController.shared.checkForUpdates()
+            } label: {
+                Label("Update to \(version)", systemImage: "arrow.down.circle.fill")
+                    .font(.callout.weight(.semibold))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(NookAccent.accent, in: Capsule())
             }
-            .buttonStyle(.borderedProminent)
+            .buttonStyle(.plain)
         case .checking:
-            Text("Checking for updates…")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        case .upToDate:
-            Text("You're on the latest version")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-        case .unknown:
-            Button("Check for Updates…") {
-                SparkleController.shared.probe()
+            HStack(spacing: 7) {
+                ProgressView()
+                    .controlSize(.small)
+                Text("Checking for updates…")
             }
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+        case .upToDate:
+            Label("You're on the latest version", systemImage: "checkmark.seal.fill")
+                .font(.callout.weight(.medium))
+                .foregroundStyle(.green)
+                .padding(.horizontal, 14)
+                .padding(.vertical, 7)
+                .background(.green.opacity(0.13), in: Capsule())
+        case .unknown:
+            Button {
+                SparkleController.shared.probe()
+            } label: {
+                Label("Check for updates", systemImage: "arrow.triangle.2.circlepath")
+                    .font(.callout.weight(.medium))
+                    .foregroundStyle(NookAccent.accent)
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 7)
+                    .background(NookAccent.accent.opacity(0.13), in: Capsule())
+            }
+            .buttonStyle(.plain)
         }
     }
 }
