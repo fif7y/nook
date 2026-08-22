@@ -3,6 +3,18 @@
     <channel>
         <title>Nook</title>
         <item>
+            <title>0.1.2</title>
+            <pubDate>Sat, 22 Aug 2026 11:15:03 -0400</pubDate>
+            <sparkle:version>3</sparkle:version>
+            <sparkle:shortVersionString>0.1.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/fif7y/nook/releases/download/v0.1.2/Nook-0.1.2.dmg" length="1923176" type="application/octet-stream" sparkle:edSignature="5luZPIzyG/3hYoKb9aMRDHQPP3va5JmMm0dQ7EWyt/+f/mu9SfF+9flmEs+CtuIVeantfU4XalpZs4iRRsJ7Bg=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/fif7y/nook/releases/download/v0.1.2/Nook3-2.delta" sparkle:deltaFrom="2" length="62502" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="5Gx6MpuQqSK9zbIyJbzNqm9AuxfWL5s8R9jXFMpjq3n5nMaCPGe7KbgO6RE3ONIQaDTWVhP0ofZrHg0oLZGaCw=="/>
+                <enclosure url="https://github.com/fif7y/nook/releases/download/v0.1.2/Nook3-1.delta" sparkle:deltaFrom="1" length="189814" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="R48b8eX2R/0F9l0SHqyPuUxFTT+wTgi2U89hOEpPWfGjMfjr5r2HrEm5ADr/dJG30BFI3Rjt0WAQXaFqu94yAQ=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>0.1.1</title>
             <pubDate>Sat, 22 Aug 2026 10:53:47 -0400</pubDate>
             <sparkle:version>2</sparkle:version>
