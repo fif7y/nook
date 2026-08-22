@@ -37,7 +37,11 @@ final class SeparatorManager {
     /// Overflow rescue: expand one currently-hidden separator so its trapped
     /// registration materializes with a draggable frame. Returns true only
     /// when it acted (separator exists and was hidden) — the caller must
-    /// `restoreVisibility()` afterwards.
+    /// `restoreVisibility()` afterwards. Until then `apply()` skips this
+    /// separator: a conceal's companion apply mid-rescue would re-hide it
+    /// under the running drag (seen live on the first rescue).
+    private var forcedID: UUID?
+
     func forceShow(_ target: ItemID) -> Bool {
         guard
             let spec = specsByID.values.first(where: {
@@ -47,12 +51,14 @@ final class SeparatorManager {
             lastVisible[spec.id] == false
         else { return false }
         NookLog.log("separator: force-show \(spec.style.displayName) for rescue")
+        forcedID = spec.id
         setVisible(true, for: spec.id, item: item, spec: spec)
         return true
     }
 
-    /// Re-apply model-derived visibility after a `forceShow`.
+    /// End a `forceShow`: re-apply model-derived visibility.
     func restoreVisibility() {
+        forcedID = nil
         applyCurrent()
     }
 
@@ -93,7 +99,7 @@ final class SeparatorManager {
     /// the assertion swap, then leave layout once the bar has settled.
     func apply(model: SectionModel, revealed: Set<NookCore.Section>) {
         for (id, item) in items {
-            guard let spec = specsByID[id] else { continue }
+            guard let spec = specsByID[id], id != forcedID else { continue }
             let section = model.section(of: Self.itemID(for: spec))
             setVisible(section == .visible || revealed.contains(section), for: id, item: item, spec: spec)
         }

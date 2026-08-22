@@ -132,7 +132,12 @@ final class MenuBarBandMonitor {
         if inBand, !pointerInBand {
             pointerInBand = true
             appState.pointerReturnedToBand()
-            if appState.settings.revealTriggers.hoverEnabled, !appState.isRevealed {
+            // A synthetic placement warps the pointer through the band — a
+            // hover reveal mid-drag injects a reveal/conceal cycle under the
+            // running drag (frames shift mid-measurement; seen live during
+            // the first overflow rescue). Not a hover.
+            if appState.settings.revealTriggers.hoverEnabled, !appState.isRevealed,
+               !appState.syntheticDragInFlight {
                 // Floor: otherwise the bar flaps open on the way to a hot corner.
                 let delay = max(appState.settings.revealTriggers.hoverDelay, AppTiming.hoverDelayFloor)
                 hoverTimer?.invalidate()
@@ -145,7 +150,8 @@ final class MenuBarBandMonitor {
                         // graze must not open the bar.
                         let location = NSEvent.mouseLocation
                         guard let screen = NSScreen.containing(location),
-                              self.isInMenuBarBand(location, of: screen) else { return }
+                              self.isInMenuBarBand(location, of: screen),
+                              !appState.syntheticDragInFlight else { return }
                         appState.reveal([.hidden], reason: .hover)
                     }
                 }
