@@ -247,9 +247,9 @@ private struct ItemTile: View {
         // Nook's own items (extras, separators) hide individually.
         guard !isSystemIcon, let bundle = item.id.bundleID,
               bundle != Bundle.main.bundleIdentifier else { return false }
-        return (appState.snapshot?.items ?? []).contains {
-            $0.id != item.id && $0.id.bundleID == bundle
-        }
+        // A live tile with a same-bundle sibling means count > 1; a concealed
+        // tile with a live twin never reaches here (editorItems drops it).
+        return (appState.bundleCounts[bundle] ?? 0) > 1
     }
 
     var body: some View {
@@ -600,47 +600,3 @@ private struct SeparatorChip: View {
 /// Minimal wrapping layout for icon tiles. `trailing` anchors each row to the
 /// right edge (reading order unchanged) — the editor sections use it so they
 /// mirror the real bar, which grows from the right side of the screen.
-struct FlowLayout: Layout {
-    var spacing: CGFloat = 6
-    var trailing: Bool = false
-
-    private func rows(width: CGFloat, subviews: Subviews) -> [[(index: Int, size: CGSize)]] {
-        var rows: [[(Int, CGSize)]] = [[]]
-        var x: CGFloat = 0
-        for (index, subview) in subviews.enumerated() {
-            let size = subview.sizeThatFits(.unspecified)
-            if x + size.width > width, x > 0 {
-                rows.append([])
-                x = 0
-            }
-            rows[rows.count - 1].append((index, size))
-            x += size.width + spacing
-        }
-        return rows
-    }
-
-    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
-        let width = proposal.width ?? 400
-        var height: CGFloat = 0
-        for (rowIndex, row) in rows(width: width, subviews: subviews).enumerated() {
-            if rowIndex > 0 { height += spacing }
-            height += row.map(\.size.height).max() ?? 0
-        }
-        return CGSize(width: width, height: height)
-    }
-
-    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
-        var y = bounds.minY
-        for row in rows(width: bounds.width, subviews: subviews) {
-            let rowWidth = row.map(\.size.width).reduce(0, +)
-                + spacing * CGFloat(max(row.count - 1, 0))
-            var x = trailing ? max(bounds.maxX - rowWidth, bounds.minX) : bounds.minX
-            let rowHeight = row.map(\.size.height).max() ?? 0
-            for (index, size) in row {
-                subviews[index].place(at: CGPoint(x: x, y: y), proposal: ProposedViewSize(size))
-                x += size.width + spacing
-            }
-            y += rowHeight + spacing
-        }
-    }
-}

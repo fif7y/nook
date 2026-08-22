@@ -242,44 +242,20 @@ final class PlacementController {
         let leftNeighbor = leftPair?.frame.map(lifted)
         let rightNeighbor = rightPair?.frame.map(lifted)
 
-        var targetX: CGFloat
-        switch (leftNeighbor, rightNeighbor) {
-        case (let left?, let right?) where left.maxX < right.minX:
-            targetX = (left.maxX + right.minX) / 2
-        case (let left?, _):
-            targetX = left.maxX + 14
-        case (_, let right?):
-            targetX = right.minX - 14
-        default:
-            guard let chevronFrame else {
-                NookLog.log("place: no live neighbors and no chevron for \(id.rawValue) — skipping")
-                return false
-            }
-            let managedMinX = snap.items
-                .filter { !MenuBarPolicy.isUnmanagedAppleBundle($0.id.bundleID) && !$0.id.isSystemModule }
-                .compactMap(\.frame?.minX)
-                .min() ?? chevronFrame.minX
-            switch section {
-            case .alwaysHidden: targetX = managedMinX - 20
-            case .hidden: targetX = chevronFrame.minX - 15
-            case .visible: targetX = chevronFrame.maxX + 25
-            }
-        }
-        // Never approach screen corners (hot corners: Mission Control) or
-        // leave the trailing status area.
-        targetX = min(max(targetX, 200), screen.frame.maxX - 60)
-        // The section's side of the chevron is a hard constraint — neighbor
-        // midpoints can land across the boundary (e.g. first-of-Visible aims
-        // "just left of its right neighbor", which is the chevron's far side).
-        // Applied LAST: the corner floor once pushed a hidden-section target
-        // right of a far-left chevron, dropping the item into the wrong side.
-        if let chevronFrame {
-            switch section {
-            case .visible:
-                targetX = max(targetX, chevronFrame.maxX + 12)
-            case .hidden, .alwaysHidden:
-                targetX = min(targetX, chevronFrame.minX - 12)
-            }
+        let managedMinX = snap.items
+            .filter { !MenuBarPolicy.isUnmanagedAppleBundle($0.id.bundleID) && !$0.id.isSystemModule }
+            .compactMap(\.frame?.minX)
+            .min()
+        guard let targetX = PlacementGeometry.targetX(
+            leftNeighbor: leftNeighbor,
+            rightNeighbor: rightNeighbor,
+            chevron: chevronFrame,
+            section: section,
+            managedMinX: managedMinX,
+            screenMaxX: screen.frame.maxX
+        ) else {
+            NookLog.log("place: no live neighbors and no chevron for \(id.rawValue) — skipping")
+            return false
         }
 
         // Skip only when the item is genuinely at its slot already — a full
@@ -307,11 +283,13 @@ final class PlacementController {
         // other target is the correct one.
         func landedInSlot(_ snap: EngineSnapshot) -> Bool {
             guard let x = snap.items.first(where: { $0.id == id })?.frame?.midX else { return false }
-            if let l = leftPair, let lf = snap.items.first(where: { $0.id == l.id })?.frame,
-               inBand(lf), x < lf.midX { return false }
-            if let r = rightPair, let rf = snap.items.first(where: { $0.id == r.id })?.frame,
-               inBand(rf), x > rf.midX { return false }
-            return true
+            let leftMid = leftPair
+                .flatMap { l in snap.items.first { $0.id == l.id }?.frame }
+                .flatMap { inBand($0) ? $0.midX : nil }
+            let rightMid = rightPair
+                .flatMap { r in snap.items.first { $0.id == r.id }?.frame }
+                .flatMap { inBand($0) ? $0.midX : nil }
+            return PlacementGeometry.inSlot(x: x, leftMidX: leftMid, rightMidX: rightMid)
         }
         NookLog.log("place: dragging \(id.rawValue) x=\(frame.midX) → \(targetX) (section \(section))")
         await ItemMover.cmdDrag(
@@ -333,8 +311,9 @@ final class PlacementController {
            let rawRight = rightPair.flatMap({ r in after.items.first { $0.id == r.id }?.frame }),
            inBand(rawLeft), inBand(rawRight),
            rawLeft.maxX < rawRight.minX {
-            var retryX = (rawLeft.maxX + rawRight.minX) / 2
-            retryX = min(max(retryX, 200), screen.frame.maxX - 60)
+            let retryX = PlacementGeometry.rawRetryX(
+                left: rawLeft, right: rawRight, screenMaxX: screen.frame.maxX
+            )
             NookLog.log("place: retry with raw frames \(id.rawValue) x=\(retryFrame.midX) → \(retryX)")
             await ItemMover.cmdDrag(
                 from: CGPoint(x: retryFrame.midX, y: 12),

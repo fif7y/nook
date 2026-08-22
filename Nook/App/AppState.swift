@@ -200,7 +200,7 @@ final class AppState {
             // Visible-destined newcomers place right away (the flush filter
             // passes them without a reveal); concealed ones wait for one.
             placement.flushPendingPlacements()
-            snapshot = await engine.snapshot()
+            updateSnapshot(await engine.snapshot())
             // Startup state: everything the model says is hidden, is hidden.
             dispatch(rehide.handle(.concealRequested))
             // Launch baseline: the band monitor only applies display behavior
@@ -614,7 +614,7 @@ final class AppState {
                 return
             }
             let snap = await engine.snapshot()
-            snapshot = snap
+            updateSnapshot(snap)
             NookLog.log("adopt: pass (retry=\(retry), items=\(snap.items.count))")
             adopt(from: snap)
         }
@@ -633,10 +633,22 @@ final class AppState {
     }
 
     /// The one write path for the engine snapshot mirror (PlacementController
-    /// and engine-event handling route through here).
+    /// and engine-event handling route through here). Content-gated: every
+    /// assignment fires @Observable invalidation (re-running the editor
+    /// pipeline while settings is open), and most snapshots differ only by
+    /// `takenAt`.
     func updateSnapshot(_ snap: EngineSnapshot) {
+        guard snapshot?.contentEquals(snap) != true else { return }
         snapshot = snap
+        bundleCounts = snap.items.reduce(into: [:]) { counts, item in
+            guard let bundle = item.id.bundleID else { return }
+            counts[bundle, default: 0] += 1
+        }
     }
+
+    /// Live items per bundle — the editor's sibling badge reads this instead
+    /// of scanning the whole snapshot per tile.
+    private(set) var bundleCounts: [String: Int] = [:]
 
     /// New-app routing: any third-party bundle never seen before gets its
     /// items assigned to `newItemsDestination`. Runs BEFORE converge so the
@@ -725,7 +737,7 @@ final class AppState {
         switch engineEvent {
         case .externalOrderChange:
             adoptSectionsFromBar()
-            Task { snapshot = await engine.snapshot() }
+            Task { updateSnapshot(await engine.snapshot()) }
         case .itemsChanged:
             // Route never-seen bundles to the configured new-items section,
             // then re-converge so the change (or a known bundle rejoining the
@@ -738,7 +750,7 @@ final class AppState {
                 // destinations stay queued until a full reveal makes their
                 // slot deterministic.
                 placement.flushPendingPlacements()
-                snapshot = await engine.snapshot()
+                updateSnapshot(await engine.snapshot())
                 // The system camera pill appearing/vanishing is an
                 // itemsChanged — Nook's indicator defers to it live. But NOT
                 // mid-transition: every reveal/conceal fires itemsChanged

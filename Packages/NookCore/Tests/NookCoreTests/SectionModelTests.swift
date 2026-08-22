@@ -123,4 +123,17 @@ import Testing
         #expect(model.section(of: new) == section)
         #expect(model.section(of: old) == section)
     }
+
+    @Test func canonicalizeIsIdempotent() {
+        let old = ItemID(rawValue: "status:com.sindresorhus.Velja::Left and right arrows in a filled circle")
+        let new = ItemID(rawValue: "status:com.sindresorhus.Velja::Item-0")
+        var model = SectionModel(
+            assignments: [old: .alwaysHidden, new: .hidden],
+            order: [.alwaysHidden: [old], .hidden: [new]]
+        )
+        model.canonicalize()
+        let once = model
+        model.canonicalize()
+        #expect(model == once)
+    }
 }

@@ -31,6 +31,12 @@ public struct EngineSnapshot: Equatable, Sendable {
         self.concealed = concealed
         self.takenAt = takenAt
     }
+
+    /// Equality ignoring `takenAt` — for observers that only care whether the
+    /// bar's content changed, not when it was last walked.
+    public func contentEquals(_ other: EngineSnapshot) -> Bool {
+        items == other.items && concealed == other.concealed
+    }
 }
 
 public enum EngineEvent: Equatable, Sendable {
