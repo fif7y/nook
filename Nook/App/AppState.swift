@@ -751,113 +751,18 @@ final class AppState {
         // adoptSectionsFromBar defers while transitioning/settling; this is
         // the last line of defense if called on a stale path.
         guard !isTransitioning else { return }
-        let nookBundle = Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
-        guard let chevronX = nookChevronItem(in: snap)?.frame?.minX else { return }
-
-        let isFirstPass = lastAdoptionZones.isEmpty
-        NookLog.log("adopt: chevronX=\(chevronX) firstPass=\(isFirstPass) trackedZones=\(lastAdoptionZones.count)")
-        var model = settings.sectionModel
-        var changed = false
-        // Cluster edges from the PRE-adoption model: the always-hidden and
-        // hidden members' live frames (only present during a full reveal).
-        // Self-excluded per item below so an item never bounds itself.
-        let clusterX: [(id: ItemID, x: CGFloat, section: NookCore.Section)] = snap.items.compactMap {
-            guard let x = $0.frame?.minX else { return nil }
-            let section = model.section(of: $0.id)
-            guard section != .visible else { return nil }
-            return ($0.id, x, section)
-        }
-        for item in snap.items {
-            guard let bundle = item.id.bundleID,
-                  bundle != nookBundle || MenuBarPolicy.isNookExtraID(item.id),
-                  !MenuBarPolicy.isUnmanagedAppleBundle(bundle),
-                  let frame = item.frame
-            else { continue }
-            let current = model.section(of: item.id)
-            let zone: NookCore.Section
-            var confident = true
-            if frame.minX >= chevronX {
-                zone = .visible
-            } else {
-                let ahMax = clusterX
-                    .filter { $0.section == .alwaysHidden && $0.id != item.id }
-                    .map(\.x).max()
-                let hMin = clusterX
-                    .filter { $0.section == .hidden && $0.id != item.id }
-                    .map(\.x).min()
-                if let ahMax, frame.minX < ahMax {
-                    zone = .alwaysHidden
-                } else if let hMin, frame.minX > hMin {
-                    zone = .hidden
-                } else {
-                    // Between the clusters, or a cluster is concealed and
-                    // unmeasurable — ambiguous, so the model's word stands
-                    // (an always-hidden item stays; anything else is hidden).
-                    zone = current == .alwaysHidden ? .alwaysHidden : .hidden
-                    confident = false
-                }
-            }
-            let previousZone = lastAdoptionZones[item.id.rawValue]
-            // A guessed zone must never become a baseline: a new app lands
-            // far left, reads "hidden" while concealed (ambiguous) and
-            // "alwaysHidden" on the next full reveal — that flap would adopt
-            // as if the user dragged it. Only measured zones persist.
-            if confident { lastAdoptionZones[item.id.rawValue] = zone }
-            // First sighting establishes a baseline; only a zone CHANGE adopts.
-            guard !isFirstPass, let previousZone, previousZone != zone else { continue }
-            guard zone != current else { continue }
-            if zone == .visible {
-                model.assignments.removeValue(forKey: item.id.sectionKey)
-            } else {
-                model.assignments[item.id.sectionKey] = zone
-            }
-            NookLog.log("adopt: \(item.id.rawValue) → \(zone)")
-            changed = true
-        }
-        // Within-section order: the editor treats the explicit stored order as
-        // authoritative, so a manual ⌘-drag would otherwise show at its OLD
-        // slot forever. Fold the bar's left-to-right reality back in: entries
-        // with live frames reorder to match X, frame-nil (concealed) entries
-        // hold their slots, entries whose section changed drop out, and
-        // newly-adopted members slot in by X. Safe here because adopt only
-        // runs on a settled bar — reflows shift frames but preserve X order.
-        // Keyed canonically (leftmost frame wins for multi-item bundles) —
-        // order arrays hold canonical section keys.
-        let liveX: [ItemID: CGFloat] = snap.items.reduce(into: [:]) {
-            guard let x = $1.frame?.minX else { return }
-            let key = $1.id.sectionKey
-            $0[key] = min($0[key] ?? .greatestFiniteMagnitude, x)
-        }
-        for (section, order) in model.order {
-            var newOrder = order.filter { model.section(of: $0) == section }
-            let liveSlots = newOrder.indices.filter { liveX[newOrder[$0]] != nil }
-            let sortedLive = liveSlots.map { newOrder[$0] }.sorted { liveX[$0]! < liveX[$1]! }
-            for (offset, slot) in liveSlots.enumerated() { newOrder[slot] = sortedLive[offset] }
-            var known = Set(newOrder)
-            let missing = snap.items.filter {
-                $0.frame != nil && !known.contains($0.id.sectionKey)
-                    && model.section(of: $0.id) == section
-                    && !$0.id.isSystemModule
-                    && !MenuBarPolicy.isUnmanagedAppleBundle($0.id.bundleID)
-                    && ($0.id.bundleID != nookBundle || MenuBarPolicy.isNookExtraID($0.id))
-            }
-            for item in missing.sorted(by: { liveX[$0.id.sectionKey]! < liveX[$1.id.sectionKey]! }) {
-                let key = item.id.sectionKey
-                guard known.insert(key).inserted else { continue }
-                let x = liveX[key]!
-                let insertAfter = newOrder.lastIndex { liveX[$0].map { $0 < x } == true }
-                newOrder.insert(key, at: insertAfter.map { $0 + 1 } ?? 0)
-            }
-            if newOrder != order {
-                model.order[section] = newOrder
-                NookLog.log("adopt: \(section) order reconciled from bar")
-                changed = true
-            }
-        }
-        if changed {
-            settings.sectionModel = model
+        guard let result = BarAdoption.reconcile(
+            items: snap.items.map { (id: $0.id, minX: $0.frame?.minX) },
+            model: settings.sectionModel,
+            previousZones: lastAdoptionZones,
+            nookBundleID: Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
+        ) else { return }
+        for line in result.log { NookLog.log(line) }
+        lastAdoptionZones = result.zones
+        if result.changed {
+            settings.sectionModel = result.model
             settings.save()
-            Task { await engine.setModel(model) }
+            Task { await engine.setModel(result.model) }
         }
     }
 
