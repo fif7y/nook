@@ -454,9 +454,7 @@ private struct AboutPane: View {
 
             VStack(spacing: 10) {
                 if SparkleController.shared.isConfigured {
-                    Button("Check for Updates…") {
-                        SparkleController.shared.checkForUpdates()
-                    }
+                    updateRow
                 }
                 Button("Replay the intro") {
                     OnboardingController.shared.present(appState: appState)
@@ -466,5 +464,31 @@ private struct AboutPane: View {
         }
         .frame(maxWidth: .infinity)
         .padding(.top, 60)
+        .onAppear { SparkleController.shared.probe() }
+    }
+
+    /// Inline update state — no "you're up to date" alert; the pane just
+    /// shows it. The button only appears when there is something to install,
+    /// and hands off to Sparkle's standard flow.
+    @ViewBuilder private var updateRow: some View {
+        switch SparkleController.shared.status {
+        case .available(let version):
+            Button("Update to \(version)") {
+                SparkleController.shared.checkForUpdates()
+            }
+            .buttonStyle(.borderedProminent)
+        case .checking:
+            Text("Checking for updates…")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        case .upToDate:
+            Text("You're on the latest version")
+                .font(.callout)
+                .foregroundStyle(.secondary)
+        case .unknown:
+            Button("Check for Updates…") {
+                SparkleController.shared.probe()
+            }
+        }
     }
 }
