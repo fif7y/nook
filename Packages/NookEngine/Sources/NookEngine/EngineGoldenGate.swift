@@ -186,7 +186,20 @@ public actor EngineGoldenGate: MenuBarEngine {
         if !revealedSections.isEmpty {
             let sections = revealedSections
             NookLog.log("applyOrder: revealed during rebuild — conceal/reveal pulse to re-slot")
-            await conceal()
+            // The conceal's converge can be silently superseded by a
+            // concurrent setModel/adoption converge (epoch guard) — and
+            // without a LANDED conceal swap nothing exits layout, so nothing
+            // re-slots. lastSwapAt only advances on a swap, and with
+            // revealedSections cleared only a concealing plan swaps (a stale
+            // reveal-state plan no-ops against the active reveal assertion) —
+            // so a stationary lastSwapAt means the conceal was lost: retry.
+            for attempt in 1...3 {
+                let before = lastSwapAt
+                await conceal()
+                if lastSwapAt > before { break }
+                NookLog.log("applyOrder: pulse conceal superseded (attempt \(attempt)) — retrying")
+                try? await Task.sleep(for: EngineTiming.reSlotPulsePoll)
+            }
             // Let the hide swap actually land before re-revealing — swaps can
             // land after the transaction returns (settle≠swap).
             let pulseDeadline = Date().addingTimeInterval(EngineTiming.reSlotPulseDeadline)
@@ -208,9 +221,15 @@ public actor EngineGoldenGate: MenuBarEngine {
         try? await Task.sleep(for: .seconds(EngineTiming.agentRestartSettle))
         let deadline = Date().addingTimeInterval(EngineTiming.agentRespawnDeadline)
         while Date() < deadline {
+            // Poll the enumerator DIRECTLY — refreshSnapshot here would stamp
+            // empty walks into lastSnapshot and fire itemsChanged, and that
+            // setModel converge storm both races the re-slot pulse's conceal
+            // (epoch guard) and degrades the editor to stored stand-in tiles
+            // mid-rebuild.
             if !NSRunningApplication.runningApplications(
                 withBundleIdentifier: ItemEnumerator.agentBundleID
-            ).isEmpty, await !refreshSnapshot().items.isEmpty {
+            ).isEmpty, await !enumerator.snapshotItems().isEmpty {
+                _ = await refreshSnapshot()
                 return
             }
             try? await Task.sleep(for: EngineTiming.agentRespawnPoll)
