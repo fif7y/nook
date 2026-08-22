@@ -623,6 +623,10 @@ final class AppState {
         return false
     }
 
+    /// The band monitor skips drag-end adoption for Nook's own synthetic
+    /// drags — see PlacementController.syntheticDragInFlight.
+    var syntheticDragInFlight: Bool { placement.syntheticDragInFlight }
+
     /// The one write path for the engine snapshot mirror (PlacementController
     /// and engine-event handling route through here). Content-gated: every
     /// assignment fires @Observable invalidation (re-running the editor

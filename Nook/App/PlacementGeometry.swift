@@ -62,8 +62,11 @@ enum PlacementGeometry {
         return true
     }
 
-    /// Retry midpoint from RAW (unlifted) neighbor frames, same corner clamps.
+    /// Retry target from RAW (unlifted) neighbor frames: the midpoint of the
+    /// neighbors' CENTERS, valid even when packed icons leave no edge gap —
+    /// the drop only needs to land between the mids for the agent to slot
+    /// between them. Same corner clamps.
     static func rawRetryX(left: CGRect, right: CGRect, screenMaxX: CGFloat) -> CGFloat {
-        min(max((left.maxX + right.minX) / 2, 200), screenMaxX - 60)
+        min(max((left.midX + right.midX) / 2, 200), screenMaxX - 60)
     }
 }

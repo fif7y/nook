@@ -160,8 +160,11 @@ public actor EngineGoldenGate: MenuBarEngine {
                 let li = explicit.firstIndex(of: lhs.id.sectionKey) ?? Int.max
                 let ri = explicit.firstIndex(of: rhs.id.sectionKey) ?? Int.max
                 if li != ri { return li < ri }
-                // Fall back to current on-screen order (agent order).
-                return (lhs.frame?.minX ?? 0) < (rhs.frame?.minX ?? 0)
+                // Fall back to current on-screen order (agent order);
+                // frame-nil (concealed) items rank rightmost — the editor's
+                // rule, pinned by EditorItemsBuilderTests.
+                return (lhs.frame?.minX ?? .greatestFiniteMagnitude)
+                    < (rhs.frame?.minX ?? .greatestFiniteMagnitude)
             }
             orderedTags.append(contentsOf: ranked.map(\.id.rawValue))
         }

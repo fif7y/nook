@@ -43,6 +43,14 @@ final class PlacementController {
 
     private var placementChain: Task<Void, Never>?
 
+    /// True while a synthetic ⌘-drag sequence is executing. The band monitor
+    /// consults this to skip its drag-end adoption for OUR drags: the model
+    /// is authoritative in that flow (the editor drop already wrote it), and
+    /// adopting a BOUNCED drag would cement the failed order back into the
+    /// model, silently reverting the user's arrangement.
+    private(set) var activePlacements = 0
+    var syntheticDragInFlight: Bool { activePlacements > 0 }
+
     /// Routed-but-not-yet-placed newcomers. A new icon spawns at the far left
     /// of the VISIBLE-at-that-moment items — but concealed cluster members
     /// rematerialize around it on reveal, stranding it mid-cluster (Figma
@@ -79,6 +87,8 @@ final class PlacementController {
 
     private func physicallyPlaceNow(_ id: ItemID, in section: NookCore.Section) async -> Bool {
         guard let appState else { return false }
+        activePlacements += 1
+        defer { activePlacements -= 1 }
         try? await Task.sleep(for: AppTiming.placementPreSettle)
         // The payload can be a canonical `bundle:` id (stored/concealed
         // editor tile) or any title-variant — resolve to the live
@@ -229,7 +239,7 @@ final class PlacementController {
            let rawLeft = leftPair.flatMap({ l in after.items.first { $0.id == l.id }?.frame }),
            let rawRight = rightPair.flatMap({ r in after.items.first { $0.id == r.id }?.frame }),
            inBand(rawLeft), inBand(rawRight),
-           rawLeft.maxX < rawRight.minX {
+           rawLeft.midX < rawRight.midX {
             let retryX = PlacementGeometry.rawRetryX(
                 left: rawLeft, right: rawRight, screenMaxX: screen.frame.maxX
             )

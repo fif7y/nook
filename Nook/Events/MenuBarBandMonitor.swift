@@ -51,6 +51,10 @@ final class MenuBarBandMonitor {
         switch event.type {
         case .leftMouseDragged:
             guard event.modifierFlags.contains(.command) else { return }
+            // Nook's own synthetic drags reach this global monitor too —
+            // adopting them is circular (model → drag → adopt → model), and
+            // adopting a BOUNCED one would cement the failure into the model.
+            guard !appState.syntheticDragInFlight else { return }
             let location = NSEvent.mouseLocation
             let screen = NSScreen.containing(location)
             guard let screen, isInMenuBarBand(location, of: screen) else { return }
