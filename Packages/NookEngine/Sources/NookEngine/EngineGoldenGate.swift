@@ -325,7 +325,12 @@ public actor EngineGoldenGate: MenuBarEngine {
         // the wedge is permanent. Only trust the signal once the post-swap
         // settle window (verify covers 3s) has passed, or the normal AX
         // drop-out latency right after a swap would read as a violation.
-        let assertionLost = Date().timeIntervalSince(lastSwapAt) > EngineTiming.teardownSettleWindow
+        // Gated on a live assertion: with none held, `lastSwapAt` is still
+        // .distantPast on a cold boot and the pre-assert bar (everything
+        // visible) read as a teardown — a spurious .assertionTornDown +
+        // wasted converge on every launch.
+        let assertionLost = assertion != nil
+            && Date().timeIntervalSince(lastSwapAt) > EngineTiming.teardownSettleWindow
             && snapshot.items.contains { item in
                 guard let bundle = item.id.bundleID else { return false }
                 return concealable.contains(bundle)
