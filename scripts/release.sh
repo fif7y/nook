@@ -88,7 +88,13 @@ if [[ -n "$GENERATE_APPCAST" ]]; then
     APPCAST_ARGS=(--download-url-prefix "https://github.com/fif7y/nook/releases/download/v$VERSION/")
     [[ -n "${SPARKLE_KEY_FILE:-}" ]] && APPCAST_ARGS+=(--ed-key-file "$SPARKLE_KEY_FILE")
     "$GENERATE_APPCAST" "${APPCAST_ARGS[@]}" "$RELEASES_DIR"
-    echo "==> Appcast written to $RELEASES_DIR/appcast.xml"
+    # generate_appcast stamps EVERY entry with the current release's
+    # download-url-prefix, pointing prior versions' DMGs at a tag that
+    # doesn't host them (404 for anyone updating from further back).
+    # Re-point each Nook-X.Y.Z.dmg at its own vX.Y.Z tag.
+    perl -pi -e 's#(releases/download/)v[\d.]+/(Nook-([\d.]+)\.dmg)#$1v$3/$2#g' \
+        "$RELEASES_DIR/appcast.xml"
+    echo "==> Appcast written to $RELEASES_DIR/appcast.xml (prior-version URLs re-pointed)"
 else
     echo "warning: generate_appcast not found in DerivedData — build the app once so SPM fetches Sparkle, or download the Sparkle release tools" >&2
 fi
