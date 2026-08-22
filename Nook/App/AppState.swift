@@ -446,7 +446,10 @@ final class AppState {
         // The whole rebuild — assertion drop, agent boot, teardown re-swap —
         // happens under a frozen snapshot of the current band, so the user
         // sees one clean old-order → new-order swap instead of the churn.
-        let cover = await ConcealGhostOverlay.begin(over: await barBandFrames(), safety: 4)
+        // Safety must outlive the whole rebuild: restart settle (~1.5s) + the
+        // engine's conceal/reveal re-slot pulse (~1s when revealed) + the
+        // quiesce wait below.
+        let cover = await ConcealGhostOverlay.begin(over: await barBandFrames(), safety: 7)
         let written = await engine.applyOrder()
         let deadline = Date().addingTimeInterval(3)
         while Date() < deadline, await !engine.quiesced(for: 0.4) {

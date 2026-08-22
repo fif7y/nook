@@ -202,6 +202,24 @@ public actor EngineGoldenGate: MenuBarEngine {
         // The agent takes a moment to come back; settle before re-observing.
         try? await Task.sleep(for: .seconds(1.5))
         _ = await refreshSnapshot()
+        // A freshly-booted agent lays live items back out where they sat — it
+        // re-slots from the plist only when an item (re)enters layout. While
+        // revealed (settings preview, hover) nothing re-enters, so the rebuild
+        // lands invisibly and the bar keeps its old order until the next
+        // conceal/reveal cycle. Pulse that cycle now, under the caller's
+        // cover, so the new order shows immediately.
+        if !revealedSections.isEmpty {
+            let sections = revealedSections
+            NookLog.log("applyOrder: revealed during rebuild — conceal/reveal pulse to re-slot")
+            await conceal()
+            // Let the hide swap actually land before re-revealing — swaps can
+            // land after the transaction returns (settle≠swap).
+            let pulseDeadline = Date().addingTimeInterval(1.5)
+            while Date() < pulseDeadline, !quiesced(for: 0.3) {
+                try? await Task.sleep(for: .milliseconds(100))
+            }
+            await reveal(sections)
+        }
         return Array(written.keys)
     }
 
