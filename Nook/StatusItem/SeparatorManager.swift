@@ -30,6 +30,32 @@ final class SeparatorManager {
         )
     }
 
+    var managedItemIDs: [ItemID] {
+        specsByID.values.map { Self.itemID(for: $0) }
+    }
+
+    /// Overflow rescue: expand one currently-hidden separator so its trapped
+    /// registration materializes with a draggable frame. Returns true only
+    /// when it acted (separator exists and was hidden) — the caller must
+    /// `restoreVisibility()` afterwards.
+    func forceShow(_ target: ItemID) -> Bool {
+        guard
+            let spec = specsByID.values.first(where: {
+                Self.itemID(for: $0).sectionKey == target.sectionKey
+            }),
+            let item = items[spec.id],
+            lastVisible[spec.id] == false
+        else { return false }
+        NookLog.log("separator: force-show \(spec.style.displayName) for rescue")
+        setVisible(true, for: spec.id, item: item, spec: spec)
+        return true
+    }
+
+    /// Re-apply model-derived visibility after a `forceShow`.
+    func restoreVisibility() {
+        applyCurrent()
+    }
+
     func sync(with specs: [SeparatorSpec]) {
         let wanted = Set(specs.map(\.id))
         for (id, item) in items where !wanted.contains(id) {

@@ -93,6 +93,9 @@ final class AppState {
             guard let self else { return }
             dispatch(rehide.handle(.transitionSettled))
             settleCatchUp()
+            // The bar just de-crowded — items trapped in the native
+            // overflow now have real frames. Walk any queued rescues.
+            placement.flushPendingRescues()
         }
     }
 
@@ -323,17 +326,22 @@ final class AppState {
             hotkey?.register(settings.hotkey)
             registeredHotkey = settings.hotkey
         }
+        // Newly created separators and toggled-on extras get hosted wherever
+        // macOS pleases (left end of the trailing area — or straight into the
+        // overflow notch on a crowded bar) — physically place them into their
+        // section like any editor move would. A trapped newcomer queues for
+        // the conceal-settle overflow rescue instead.
+        let previousSeparatorIDs = Set(separators?.managedItemIDs ?? [])
         separators?.sync(with: settings.separators)
-        // Newly toggled-on extras get hosted wherever macOS pleases (left end
-        // of the trailing area) — physically place them into their section
-        // like any editor move would.
+        let newSeparatorIDs = Set(separators?.managedItemIDs ?? []).subtracting(previousSeparatorIDs)
         let previousExtraIDs = Set(extras?.managedItemIDs ?? [])
         extras?.sync(with: settings.extraItems)
         let newExtraIDs = Set(extras?.managedItemIDs ?? []).subtracting(previousExtraIDs)
-        if !newExtraIDs.isEmpty {
+        let newOwnIDs = newSeparatorIDs.union(newExtraIDs)
+        if !newOwnIDs.isEmpty {
             Task {
                 try? await Task.sleep(for: AppTiming.newExtraPlacementDelay)
-                for id in newExtraIDs {
+                for id in newOwnIDs {
                     await placement.physicallyPlace(id, in: settings.sectionModel.section(of: id))
                 }
             }
@@ -429,6 +437,17 @@ final class AppState {
     /// mode), and the placement chain no-ops when already in position.
     func placeDynamicExtra(_ id: ItemID) async {
         await placement.physicallyPlace(id, in: settings.sectionModel.section(of: id))
+    }
+
+    /// Overflow rescue shims (PlacementController → SeparatorManager): expand
+    /// one hidden separator so its trapped registration becomes draggable,
+    /// then restore model-derived visibility.
+    func forceShowSeparator(_ id: ItemID) -> Bool {
+        separators?.forceShow(id) ?? false
+    }
+
+    func restoreSeparatorVisibility() {
+        separators?.restoreVisibility()
     }
 
     /// Nook's chevron item in a snapshot — the visible/hidden boundary marker
@@ -603,7 +622,11 @@ final class AppState {
             // Mid-transition bars give false frames — defer briefly. (Only
             // in-flight transitions block; a settled bar has stable frames.
             // The old post-settle quiet window starved adoption entirely.)
-            if isTransitioning {
+            // Synthetic placements/rescues also block: a rescue force-shows
+            // a hidden separator mid-conceal — separators pass isNookExtraID,
+            // so the pass would read that as a zone change, and the order
+            // fold-in would re-sort toward the position being corrected.
+            if isTransitioning || syntheticDragInFlight {
                 guard retry < AppTiming.adoptMaxDeferrals else {
                     NookLog.log("adopt: gave up after \(retry) deferrals")
                     adoptionInFlight = false

@@ -79,8 +79,74 @@ final class PlacementController {
                     id, in: appState.settings.sectionModel.section(of: id)
                 )
                 // Still unmeasurable (section concealed again, no frame) —
-                // requeue for the next reveal settle.
-                if !placed { pendingPlacements.insert(id) }
+                // requeue for the next reveal settle. Trapped items moved to
+                // the rescue queue instead; conceal is what frees them.
+                if !placed, !pendingRescues.contains(id) {
+                    pendingPlacements.insert(id)
+                }
+            }
+        }
+    }
+
+    // MARK: - Overflow rescue (items trapped in the native « overflow)
+
+    /// Items whose placement failed because their registration is trapped in
+    /// the native overflow notch: still present in AX, but reporting a
+    /// phantom frame at the trailing area's left edge — a drag from there
+    /// would grab whatever REALLY sits at that point. De-crowding
+    /// materializes trapped items with real in-band frames (verified live
+    /// 2026-08-21), so placement defers to the next conceal settle.
+    private(set) var pendingRescues: Set<ItemID> = []
+    private var rescueAttempts: [ItemID: Int] = [:]
+    private var rescuing = false
+    private static let maxRescueAttempts = 3
+
+    private func queueRescue(_ id: ItemID) {
+        guard pendingRescues.insert(id).inserted else { return }
+        NookLog.log("rescue: \(id.rawValue) queued for next conceal settle")
+    }
+
+    /// Called on every conceal settle: the bar just de-crowded, so trapped
+    /// registrations now have real frames. A hidden-section separator is
+    /// width-collapsed here — force-expand just IT, drag it to its zone,
+    /// then restore its model visibility. Adoption stays suppressed for the
+    /// whole window (activePlacements): a force-shown separator mid-conceal
+    /// reads as a zone change, and the order fold-in would re-sort the very
+    /// order the drag is placing toward.
+    func flushPendingRescues() {
+        guard !pendingRescues.isEmpty, !rescuing else { return }
+        rescuing = true
+        let queued = pendingRescues
+        pendingRescues.removeAll()
+        Task { [weak self] in
+            guard let self else { return }
+            defer { self.rescuing = false }
+            NookLog.log("rescue: attempting \(queued.count) trapped item(s)")
+            for id in queued {
+                guard let appState else { return }
+                activePlacements += 1
+                let forced = appState.forceShowSeparator(id)
+                let placed = await physicallyPlace(
+                    id, in: appState.settings.sectionModel.section(of: id)
+                )
+                if forced { appState.restoreSeparatorVisibility() }
+                activePlacements -= 1
+                // The attempt may have re-queued itself (still phantom) —
+                // this loop is the single requeue authority.
+                pendingRescues.remove(id)
+                if placed {
+                    rescueAttempts.removeValue(forKey: id)
+                } else {
+                    let attempts = rescueAttempts[id, default: 0] + 1
+                    rescueAttempts[id] = attempts
+                    if attempts < Self.maxRescueAttempts {
+                        pendingRescues.insert(id)
+                        NookLog.log("rescue: \(id.rawValue) failed (attempt \(attempts)) — requeued")
+                    } else {
+                        rescueAttempts.removeValue(forKey: id)
+                        NookLog.log("rescue: \(id.rawValue) gave up after \(attempts) attempts")
+                    }
+                }
             }
         }
     }
@@ -117,6 +183,21 @@ final class PlacementController {
         // Post-drag verification looks the item up by its LIVE id.
         let liveID = item.id
         guard let screen = NSScreen.screens.first else { return false }
+        // Trapped-in-overflow check: a trapped registration reports a phantom
+        // frame sharing its minX with another item in the same band — real
+        // items never share an x (verified 2026-08-21: 8 trapped separators
+        // at exactly one x). Dragging from a phantom would grab whatever
+        // REALLY sits there — skip and defer to the conceal-settle rescue.
+        let phantom = snap.items.contains {
+            $0.id != item.id && $0.frame.map {
+                abs($0.minX - frame.minX) < 0.5 && abs($0.midY - frame.midY) < 30
+            } == true
+        }
+        if phantom {
+            NookLog.log("place: \(id.rawValue) frame is a phantom (duplicate minX \(frame.minX)) — trapped in overflow")
+            queueRescue(id)
+            return false
+        }
         // Chevron is OPTIONAL: with the Nook icon hidden, live neighbor
         // frames alone anchor the target — only the no-neighbor fallbacks
         // and the final side clamp need the chevron.
@@ -260,6 +341,17 @@ final class PlacementController {
             appState.updateSnapshot(after)
             placed = landedInSlot(after)
             NookLog.log("place: retry landed at x=\(after.items.first(where: { $0.id == liveID })?.frame?.midX ?? -1) verified=\(placed)")
+        }
+        // A SINGLE trapped item can evade the duplicate-minX check (nothing
+        // else at its phantom x). Fallback signature for own items: both
+        // drags left the frame byte-identical. That also matches a genuine
+        // bounce — either way a retry on the de-crowded settled bar is the
+        // right recovery, so hand it to the conceal-settle rescue.
+        if !placed, dragIsNookOwned,
+           let finalX = after.items.first(where: { $0.id == liveID })?.frame?.minX,
+           abs(finalX - frame.minX) < 0.5 {
+            NookLog.log("place: \(id.rawValue) never moved (x=\(finalX)) — trapped or bounced")
+            queueRescue(id)
         }
         // The drag clicked outside Nook — hand focus back to the settings
         // window. Retried: the dragged icon's app can win an activation race
