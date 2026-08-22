@@ -406,23 +406,15 @@ final class AppState {
         // the converge below — same reflow, same motion as everything else.
         Task {
             await engine.setModel(model)
-            let nookBundle = Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
-            if id.bundleID == nookBundle || MenuBarPolicy.isUnmanagedAppleBundle(id.bundleID) {
-                // Nook-owned (and system) items keep the synthetic ⌘-drag:
-                // own-process drags freeze the bar (raw-frame mode) and are
-                // reliable, with no agent-restart blink.
-                await placement.physicallyPlace(id, in: section)
-            } else {
-                // Third-party icons reposition via the deterministic plist
-                // rebuild — synthetic drags bounce at cluster boundaries and
-                // can't touch notch-occluded items. Debounced so a burst of
-                // editor drops blinks the bar once. Routed by the item's
-                // OWNER, not raw-vs-canonical id: a stored/concealed tile's
-                // payload IS the canonical `bundle:` id, and the old
-                // `sectionKey != id` test silently sent those to a drag that
-                // can never find a frame.
-                placement.scheduleOrderApply()
-            }
+            // EVERY item moves via the synthetic ⌘-drag — the only mover the
+            // agent honors. Live third-party order lives in the client
+            // processes' own registrations (proven 2026-08-21: plist rebuilds
+            // + agent restarts + conceal/reveal cycles never re-slot a live
+            // item; a real ⌘-drag survives restarts with no disk record).
+            // The plist hint still seeds slots for FUTURE fresh
+            // registrations (app relaunches, brand-new items).
+            await engine.writeOrderHint()
+            await placement.physicallyPlace(id, in: section)
         }
     }
 
@@ -471,13 +463,15 @@ final class AppState {
         reveal([.hidden, .alwaysHidden], reason: .settingsPreview)
         Task {
             try? await Task.sleep(for: AppTiming.tidyRevealWait)
-            // Deterministic path: one plist rebuild instead of a drag walk —
-            // synthetic drags bounce at cluster boundaries and can't touch
-            // notch-occluded items.
-            await placement.applyOrderWithReMintRecovery(
-                reMintLog: "tidy: tag re-minted after restart — second order pass"
-            ) { item, written in
-                item.id.sectionKey != item.id && !written.contains(item.id.rawValue)
+            // Drag walk, left→right through the desired global order — the
+            // synthetic ⌘-drag is the only mover the agent honors for live
+            // items (see moveItem). Already-placed items skip cheaply; each
+            // drag measures against the items the walk just settled.
+            await engine.writeOrderHint()
+            for section in [NookCore.Section.alwaysHidden, .hidden, .visible] {
+                for item in editorItems(in: section) {
+                    await placement.physicallyPlace(item.id, in: section)
+                }
             }
             NookLog.log("tidy: done")
             tidying = false
@@ -608,14 +602,6 @@ final class AppState {
                 }
                 try? await Task.sleep(for: AppTiming.adoptDeferralDelay)
                 adoptSectionsFromBar(retry: retry + 1)
-                return
-            }
-            // A machine order-apply restarts the agent, which fires the same
-            // externalOrderChange as a manual drag — adopting the mid-rebuild
-            // bar would overwrite the model order the rebuild is applying,
-            // and the two fight across the next several reveals.
-            if placement.orderApplySettling {
-                NookLog.log("adopt: skipped — order apply settling")
                 return
             }
             let snap = await engine.snapshot()

@@ -138,16 +138,12 @@ public actor EngineGoldenGate: MenuBarEngine {
         Date().timeIntervalSince(lastSwapAt) > interval
     }
 
-    /// Returns the written tags so callers can detect a post-restart re-mint
-    /// (a live tag absent from the written set never got a slot).
-    @discardableResult
-    public func applyOrder() async -> [String] {
-        let snapshot = await refreshSnapshot()
-        // Desired left-to-right order: model order per section, sections laid
-        // out as [alwaysHidden][hidden][visible] (hidden sections collapse
-        // toward the left of the status area, matching the classic layout).
-        // Concealed items drop out of AX but are exactly the ones being
-        // ordered — union them in (frame nil sorts by explicit order only).
+    /// Desired left-to-right tag order: model order per section, sections
+    /// laid out as [alwaysHidden][hidden][visible] (hidden sections collapse
+    /// toward the left of the status area, matching the classic layout).
+    /// Concealed items drop out of AX but are exactly the ones being ordered
+    /// — union them in (frame nil sorts by explicit order only).
+    private func desiredOrderedTags(from snapshot: EngineSnapshot) -> [String] {
         let liveIDs = Set(snapshot.items.map(\.id))
         let concealedItems = snapshot.concealed.subtracting(liveIDs).map {
             ObservedItem(id: $0, frame: nil, appName: nil)
@@ -169,6 +165,31 @@ public actor EngineGoldenGate: MenuBarEngine {
             }
             orderedTags.append(contentsOf: ranked.map(\.id.rawValue))
         }
+        return orderedTags
+    }
+
+    /// Write the model's desired order to the agent plist WITHOUT restarting
+    /// the agent. Live items ignore the plist entirely — their order lives in
+    /// the client processes' own registrations (proven live 2026-08-21:
+    /// plist writes + restarts + conceal/reveal cycles never re-slot a live
+    /// item, while a real ⌘-drag survives agent restarts with no disk record)
+    /// — but a FRESH registration (app relaunch, brand-new item) slots from
+    /// it, so the hint keeps future spawns landing in model order.
+    public func writeOrderHint() async {
+        let snapshot = await refreshSnapshot()
+        prefsWatcher?.suppress()
+        AgentPositionStore.writeOrder(desiredOrderedTags(from: snapshot))
+    }
+
+    /// Full rebuild: plist write + agent restart + re-slot pulse. NOTE
+    /// (2026-08-21): proven ineffective for reordering LIVE third-party items
+    /// — clients re-register with their in-memory positions after every
+    /// restart. Kept for the MenuBarEngine seam; the app moves live items
+    /// with synthetic ⌘-drags and calls writeOrderHint() for the rest.
+    @discardableResult
+    public func applyOrder() async -> [String] {
+        let snapshot = await refreshSnapshot()
+        let orderedTags = desiredOrderedTags(from: snapshot)
         prefsWatcher?.suppress()
         // Return every written position KEY (the spread covers known tag
         // variants) — callers detect a re-mint precisely: a live tag missing

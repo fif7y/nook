@@ -18,93 +18,6 @@ final class PlacementController {
         self.engine = engine
     }
 
-    // MARK: - Order apply (plist rebuild)
-
-    private var orderApplyDebounce: Task<Void, Never>?
-
-    /// Coalesced plist rebuild: editor drops within a burst apply as ONE
-    /// agent restart.
-    func scheduleOrderApply() {
-        orderApplyDebounce?.cancel()
-        orderApplyDebounce = Task { [weak self] in
-            try? await Task.sleep(for: AppTiming.orderApplyDebounce)
-            guard let self, !Task.isCancelled else { return }
-            await self.applyOrderWithReMintRecovery(
-                reMintLog: "editor: tag re-minted after restart — second order pass"
-            ) { item, written in
-                item.id.sectionKey != item.id && !written.contains(item.id.rawValue)
-            }
-        }
-    }
-
-    /// applyOrder + re-mint recovery: the agent restart can re-mint a
-    /// third-party tag, and a fresh tag had no slot in the write — the agent
-    /// parks it off-model and every following reveal reads as icons jumping
-    /// around. One follow-up pass writes the fresh tags.
-    func applyOrderWithReMintRecovery(
-        reMintLog: String,
-        isReMinted: (ObservedItem, Set<String>) -> Bool
-    ) async {
-        let written = Set(await applyOrderTracked())
-        appState?.updateSnapshot(await engine.snapshot())
-        let reMinted = (appState?.snapshot?.items ?? []).contains { isReMinted($0, written) }
-        if reMinted {
-            NookLog.log(reMintLog)
-            await applyOrderTracked()
-            appState?.updateSnapshot(await engine.snapshot())
-        }
-    }
-
-    /// Every applyOrder routes here so adoption knows a machine rebuild is in
-    /// flight: the agent restart fires externalOrderChange, and adopting the
-    /// mid-rebuild bar's order would overwrite the model order the rebuild is
-    /// applying — the two then fight across the next several reveals.
-    private var lastOrderApplyAt = Date.distantPast
-
-    /// True while a machine order-apply is still settling — adoption must
-    /// skip its passes inside this window.
-    var orderApplySettling: Bool {
-        Date().timeIntervalSince(lastOrderApplyAt) < AppTiming.orderApplyAdoptWindow
-    }
-
-    @discardableResult
-    private func applyOrderTracked() async -> [String] {
-        // Never restart the agent mid-transition — the restart drops the
-        // assertion (everything flashes visible) and that blink would ride
-        // the user's reveal/conceal. Wait for the bar to settle first.
-        let settleDeadline = Date().addingTimeInterval(AppTiming.transitionSettleDeadline)
-        while Date() < settleDeadline, appState?.isTransitioning == true {
-            try? await Task.sleep(for: AppTiming.transitionSettlePoll)
-        }
-        lastOrderApplyAt = Date()
-        // The whole rebuild — assertion drop, agent boot, teardown re-swap —
-        // happens under a frozen snapshot of the current band, so the user
-        // sees one clean old-order → new-order swap instead of the churn.
-        // Safety must outlive the whole rebuild: restart settle (~1.5s) + the
-        // engine's conceal/reveal re-slot pulse (~1s when revealed) + the
-        // quiesce wait below.
-        let cover = await ConcealGhostOverlay.begin(
-            over: await barBandFrames(), safety: AppTiming.orderApplyCoverSafety
-        )
-        let written = await engine.applyOrder()
-        await appState?.waitUntilQuiesced(interval: 0.4, deadline: 3, poll: .milliseconds(150))
-        lastOrderApplyAt = Date()
-        cover?.fadeOut()
-        return written
-    }
-
-    /// Union of every live band item's frame — the cover footprint for an
-    /// order apply, where anything (including system items) may reflow.
-    private func barBandFrames() async -> CGRect? {
-        let snap = await engine.snapshot()
-        var union: CGRect?
-        for item in snap.items {
-            guard let frame = item.frame, MenuBarGeometry.isInBand(frame) else { continue }
-            union = union.map { $0.union(frame) } ?? frame
-        }
-        return union
-    }
-
     // MARK: - Physical placement (synthetic ⌘-drag)
 
     /// Returns true when the icon was dragged into place (or verified already
@@ -151,18 +64,15 @@ final class PlacementController {
         Task { [weak self] in
             guard let self else { return }
             defer { self.flushingPlacements = false }
-            // Deterministic placement: write the model's FULL desired order
-            // to the agent's position store and restart it. Synthetic drags
-            // proved unreliable here — lift-gap behavior varies by context,
-            // foreign-display frames poison targets, and boundary drops
-            // bounce — while the plist rebuild ranks by the MODEL, needs no
-            // frame measurements, and settles every item in one pass.
-            NookLog.log("place: applying full bar order for \(flushed.count) queued newcomer(s)")
-            await applyOrderWithReMintRecovery(
-                reMintLog: "place: newcomer tag re-minted after restart — second order pass"
-            ) { item, written in
-                flushed.contains { $0.sectionKey == item.id.sectionKey }
-                    && !written.contains(item.id.rawValue)
+            NookLog.log("place: placing \(flushed.count) queued newcomer(s)")
+            for id in flushed {
+                guard let appState else { return }
+                let placed = await physicallyPlace(
+                    id, in: appState.settings.sectionModel.section(of: id)
+                )
+                // Still unmeasurable (section concealed again, no frame) —
+                // requeue for the next reveal settle.
+                if !placed { pendingPlacements.insert(id) }
             }
         }
     }
@@ -170,24 +80,32 @@ final class PlacementController {
     private func physicallyPlaceNow(_ id: ItemID, in section: NookCore.Section) async -> Bool {
         guard let appState else { return false }
         try? await Task.sleep(for: AppTiming.placementPreSettle)
+        // The payload can be a canonical `bundle:` id (stored/concealed
+        // editor tile) or any title-variant — resolve to the live
+        // representative by section key, exact id first.
+        func liveItem(in snap: EngineSnapshot) -> ObservedItem? {
+            snap.items.first(where: { $0.id == id && $0.frame != nil })
+                ?? snap.items.first(where: { $0.id.sectionKey == id.sectionKey && $0.frame != nil })
+        }
         // Freshly-shown extras take a beat to be hosted — retry the lookup
         // briefly instead of giving up on the first stale snapshot.
         var snap = await engine.snapshot()
         appState.updateSnapshot(snap)
-        for _ in 0..<AppTiming.placementLookupRetries
-            where !snap.items.contains(where: { $0.id == id && $0.frame != nil }) {
+        for _ in 0..<AppTiming.placementLookupRetries where liveItem(in: snap) == nil {
             try? await Task.sleep(for: AppTiming.placementLookupRetryDelay)
             snap = await engine.snapshot()
             appState.updateSnapshot(snap)
         }
         let nookBundle = Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
         guard
-            let item = snap.items.first(where: { $0.id == id }),
+            let item = liveItem(in: snap),
             let frame = item.frame
         else {
             NookLog.log("place: no frame for \(id.rawValue) — skipping physical move (concealed?)")
             return false
         }
+        // Post-drag verification looks the item up by its LIVE id.
+        let liveID = item.id
         guard let screen = NSScreen.screens.first else { return false }
         // Chevron is OPTIONAL: with the Nook icon hidden, live neighbor
         // frames alone anchor the target — only the no-neighbor fallbacks
@@ -283,7 +201,7 @@ final class PlacementController {
         // context, and whichever assumption was wrong the first time, the
         // other target is the correct one.
         func landedInSlot(_ snap: EngineSnapshot) -> Bool {
-            guard let x = snap.items.first(where: { $0.id == id })?.frame?.midX else { return false }
+            guard let x = snap.items.first(where: { $0.id == liveID })?.frame?.midX else { return false }
             let leftMid = leftPair
                 .flatMap { l in snap.items.first { $0.id == l.id }?.frame }
                 .flatMap { inBand($0) ? $0.midX : nil }
@@ -300,14 +218,14 @@ final class PlacementController {
         try? await Task.sleep(for: AppTiming.postDragSettle)
         var after = await engine.snapshot()
         appState.updateSnapshot(after)
-        if let newFrame = after.items.first(where: { $0.id == id })?.frame {
+        if let newFrame = after.items.first(where: { $0.id == liveID })?.frame {
             NookLog.log("place: landed at x=\(newFrame.midX)")
         } else {
             NookLog.log("place: item not observable after drag")
         }
         var placed = landedInSlot(after)
         if !placed,
-           let retryFrame = after.items.first(where: { $0.id == id })?.frame,
+           let retryFrame = after.items.first(where: { $0.id == liveID })?.frame,
            let rawLeft = leftPair.flatMap({ l in after.items.first { $0.id == l.id }?.frame }),
            let rawRight = rightPair.flatMap({ r in after.items.first { $0.id == r.id }?.frame }),
            inBand(rawLeft), inBand(rawRight),
@@ -324,7 +242,7 @@ final class PlacementController {
             after = await engine.snapshot()
             appState.updateSnapshot(after)
             placed = landedInSlot(after)
-            NookLog.log("place: retry landed at x=\(after.items.first(where: { $0.id == id })?.frame?.midX ?? -1) verified=\(placed)")
+            NookLog.log("place: retry landed at x=\(after.items.first(where: { $0.id == liveID })?.frame?.midX ?? -1) verified=\(placed)")
         }
         // The drag clicked outside Nook — hand focus back to the settings
         // window. Retried: the dragged icon's app can win an activation race
