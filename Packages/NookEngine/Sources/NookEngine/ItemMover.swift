@@ -8,11 +8,17 @@ import AppKit
 import CoreGraphics
 import Foundation
 
-@MainActor
 public enum ItemMover {
     /// Performs a ⌘-drag from one menubar point to another (top-left-origin
     /// global coordinates, i.e. the same space as AX frames). Saves and
     /// restores the user's cursor so the pointer doesn't visibly teleport.
+    ///
+    /// Runs OFF the main actor deliberately: when the dragged item is Nook's
+    /// OWN, our process runs AppKit's drag tracking — posting from the main
+    /// actor interleaved the tracking loop with this function's sleeps and
+    /// every own-item drop reverted, while a real ⌘-drag on the same item
+    /// worked (verified live 2026-08-21). Third-party items never cared
+    /// (their owning app tracks the drag).
     public static func cmdDrag(from: CGPoint, to: CGPoint) async {
         guard let source = CGEventSource(stateID: .hidSystemState) else { return }
         let originalPosition = CGEvent(source: nil)?.location
