@@ -25,14 +25,7 @@ final class AppState {
         didSet {
             guard oldValue != settingsWindowVisible else { return }
             if !settingsWindowVisible {
-                // Closing settings re-applies the pointer display's policy —
-                // an unconditional conceal here collapsed the bar even on
-                // "always show everything" displays.
-                if pointerDisplayBehavior == .alwaysShowAll {
-                    reveal([.hidden], reason: .displayPolicy)
-                } else {
-                    concealNow()
-                }
+                applyPointerDisplayPolicyAfterDismissal()
             }
         }
     }
@@ -246,15 +239,23 @@ final class AppState {
     private func scheduleRevealCoverPrecapture() {
         guard settings.revealAnimation != .smooth else { return }
         Task { @MainActor in
-            let deadline = Date().addingTimeInterval(3)
-            while Date() < deadline, await !engine.quiesced(for: 0.5) {
-                try? await Task.sleep(for: .milliseconds(200))
-            }
+            await waitUntilQuiesced(interval: 0.5, deadline: 3, poll: .milliseconds(200))
             // The ghost's fade must not bake into the snapshot.
             try? await Task.sleep(for: .milliseconds(300))
             guard currentRevealedSections.isEmpty, !ConcealGhostOverlay.stripActive
             else { return }
             revealCoverSnapshot = await ConcealGhostOverlay.snapshot(of: revealCoverRect)
+        }
+    }
+
+    /// Bounded poll until the engine reports swap-quiet for `interval` — the
+    /// agent animates each swap, so quiet means the bar has stopped moving.
+    private func waitUntilQuiesced(
+        interval: TimeInterval, deadline: TimeInterval, poll: Duration
+    ) async {
+        let by = Date().addingTimeInterval(deadline)
+        while Date() < by, await !engine.quiesced(for: interval) {
+            try? await Task.sleep(for: poll)
         }
     }
 
@@ -325,7 +326,7 @@ final class AppState {
         let newExtraIDs = Set(extras?.managedItemIDs ?? []).subtracting(previousExtraIDs)
         if !newExtraIDs.isEmpty {
             Task {
-                try? await Task.sleep(for: .milliseconds(600))
+                try? await Task.sleep(for: AppTiming.newExtraPlacementDelay)
                 for id in newExtraIDs {
                     await physicallyPlace(id, in: settings.sectionModel.section(of: id))
                 }
@@ -338,6 +339,18 @@ final class AppState {
             self.settings.save()
             await self.engine.setSteadyExtras(self.settings.hideSystemExtras)
             await self.engine.setModel(self.settings.sectionModel)
+        }
+    }
+
+    /// Settings-window close, tidy end, editor-tab close: the pointer
+    /// display's policy decides between conceal and reveal — an unconditional
+    /// conceal here collapsed the bar even on "always show everything"
+    /// displays.
+    func applyPointerDisplayPolicyAfterDismissal() {
+        if pointerDisplayBehavior == .alwaysShowAll {
+            reveal([.hidden], reason: .displayPolicy)
+        } else {
+            concealNow()
         }
     }
 
@@ -409,22 +422,31 @@ final class AppState {
     private func scheduleOrderApply() {
         orderApplyDebounce?.cancel()
         orderApplyDebounce = Task { [weak self] in
-            try? await Task.sleep(for: .milliseconds(1200))
+            try? await Task.sleep(for: AppTiming.orderApplyDebounce)
             guard let self, !Task.isCancelled else { return }
-            // Same re-mint second pass as tidy/newcomer flush: the restart
-            // can re-mint a third-party tag, and a fresh tag had no slot in
-            // the write — the agent parks it off-model and every following
-            // reveal reads as icons jumping around.
-            let written = Set(await self.applyOrderTracked())
-            self.snapshot = await self.engine.snapshot()
-            let reMinted = (self.snapshot?.items ?? []).contains { item in
+            await self.applyOrderWithReMintRecovery(
+                reMintLog: "editor: tag re-minted after restart — second order pass"
+            ) { item, written in
                 item.id.sectionKey != item.id && !written.contains(item.id.rawValue)
             }
-            if reMinted {
-                NookLog.log("editor: tag re-minted after restart — second order pass")
-                await self.applyOrderTracked()
-                self.snapshot = await self.engine.snapshot()
-            }
+        }
+    }
+
+    /// applyOrder + re-mint recovery: the agent restart can re-mint a
+    /// third-party tag, and a fresh tag had no slot in the write — the agent
+    /// parks it off-model and every following reveal reads as icons jumping
+    /// around. One follow-up pass writes the fresh tags.
+    private func applyOrderWithReMintRecovery(
+        reMintLog: String,
+        isReMinted: (ObservedItem, Set<String>) -> Bool
+    ) async {
+        let written = Set(await applyOrderTracked())
+        snapshot = await engine.snapshot()
+        let reMinted = (snapshot?.items ?? []).contains { isReMinted($0, written) }
+        if reMinted {
+            NookLog.log(reMintLog)
+            await applyOrderTracked()
+            snapshot = await engine.snapshot()
         }
     }
 
@@ -438,9 +460,9 @@ final class AppState {
         // Never restart the agent mid-transition — the restart drops the
         // assertion (everything flashes visible) and that blink would ride
         // the user's reveal/conceal. Wait for the bar to settle first.
-        let settleDeadline = Date().addingTimeInterval(5)
+        let settleDeadline = Date().addingTimeInterval(AppTiming.transitionSettleDeadline)
         while Date() < settleDeadline, isTransitioning {
-            try? await Task.sleep(for: .milliseconds(150))
+            try? await Task.sleep(for: AppTiming.transitionSettlePoll)
         }
         lastOrderApplyAt = Date()
         // The whole rebuild — assertion drop, agent boot, teardown re-swap —
@@ -449,12 +471,11 @@ final class AppState {
         // Safety must outlive the whole rebuild: restart settle (~1.5s) + the
         // engine's conceal/reveal re-slot pulse (~1s when revealed) + the
         // quiesce wait below.
-        let cover = await ConcealGhostOverlay.begin(over: await barBandFrames(), safety: 7)
+        let cover = await ConcealGhostOverlay.begin(
+            over: await barBandFrames(), safety: AppTiming.orderApplyCoverSafety
+        )
         let written = await engine.applyOrder()
-        let deadline = Date().addingTimeInterval(3)
-        while Date() < deadline, await !engine.quiesced(for: 0.4) {
-            try? await Task.sleep(for: .milliseconds(150))
-        }
+        await waitUntilQuiesced(interval: 0.4, deadline: 3, poll: .milliseconds(150))
         lastOrderApplyAt = Date()
         cover?.fadeOut()
         return written
@@ -536,19 +557,11 @@ final class AppState {
             // bounce — while the plist rebuild ranks by the MODEL, needs no
             // frame measurements, and settles every item in one pass.
             NookLog.log("place: applying full bar order for \(flushed.count) queued newcomer(s)")
-            let written = Set(await applyOrderTracked())
-            snapshot = await engine.snapshot()
-            // The restart can re-mint a newcomer's tag (title timing at agent
-            // boot) — a brand-new tag had no slot in the write and the agent
-            // parks it far left. One follow-up pass writes the fresh tags.
-            let reMinted = (snapshot?.items ?? []).contains { item in
+            await applyOrderWithReMintRecovery(
+                reMintLog: "place: newcomer tag re-minted after restart — second order pass"
+            ) { item, written in
                 flushed.contains { $0.sectionKey == item.id.sectionKey }
                     && !written.contains(item.id.rawValue)
-            }
-            if reMinted {
-                NookLog.log("place: newcomer tag re-minted after restart — second order pass")
-                await applyOrderTracked()
-                snapshot = await engine.snapshot()
             }
         }
     }
@@ -576,11 +589,7 @@ final class AppState {
         // Chevron is OPTIONAL: with the Nook icon hidden, live neighbor
         // frames alone anchor the target — only the no-neighbor fallbacks
         // and the final side clamp need the chevron.
-        let rawChevronFrame = snap.items.first(where: {
-            $0.id.bundleID == nookBundle
-                && !MenuBarPolicy.isNookExtraID($0.id)
-                && !$0.id.rawValue.contains("Separator")
-        })?.frame
+        let rawChevronFrame = nookChevronItem(in: snap)?.frame
 
         // Neighbors in the DESIRED order that have live frames — adjusted into
         // the "lifted" coordinate space: once the drag picks the item up, the
@@ -750,6 +759,17 @@ final class AppState {
         return placed
     }
 
+    /// Nook's chevron item in a snapshot — the visible/hidden boundary marker
+    /// (never an extra or separator).
+    private func nookChevronItem(in snap: EngineSnapshot) -> ObservedItem? {
+        let nookBundle = Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
+        return snap.items.first(where: {
+            $0.id.bundleID == nookBundle
+                && !MenuBarPolicy.isNookExtraID($0.id)
+                && !$0.id.rawValue.contains("Separator")
+        })
+    }
+
     /// The on-screen left-to-right order of a section right now (fallback when
     /// no explicit order exists yet).
     func currentOrder(in section: NookCore.Section) -> [ItemID] {
@@ -770,32 +790,19 @@ final class AppState {
         NookLog.log("tidy: starting")
         reveal([.hidden, .alwaysHidden], reason: .settingsPreview)
         Task {
-            try? await Task.sleep(for: .seconds(1.2))
+            try? await Task.sleep(for: AppTiming.tidyRevealWait)
             // Deterministic path: one plist rebuild instead of a drag walk —
             // synthetic drags bounce at cluster boundaries and can't touch
-            // notch-occluded items. Second pass only if the agent re-minted
-            // a tag during its restart (that tag never got a slot).
-            let written = Set(await applyOrderTracked())
-            snapshot = await engine.snapshot()
-            let reMinted = (snapshot?.items ?? []).contains { item in
+            // notch-occluded items.
+            await applyOrderWithReMintRecovery(
+                reMintLog: "tidy: tag re-minted after restart — second order pass"
+            ) { item, written in
                 item.id.sectionKey != item.id && !written.contains(item.id.rawValue)
-            }
-            if reMinted {
-                NookLog.log("tidy: tag re-minted after restart — second order pass")
-                await applyOrderTracked()
-                snapshot = await engine.snapshot()
             }
             NookLog.log("tidy: done")
             tidying = false
             if !settingsWindowVisible {
-                // Same rule as settings-close: the pointer display's policy
-                // decides — an unconditional conceal collapsed the bar on
-                // "always show everything" displays.
-                if pointerDisplayBehavior == .alwaysShowAll {
-                    reveal([.hidden], reason: .displayPolicy)
-                } else {
-                    concealNow()
-                }
+                applyPointerDisplayPolicyAfterDismissal()
             }
         }
     }
@@ -968,11 +975,11 @@ final class AppState {
                         // 15-min freshness cap: an appearance/wallpaper change
                         // while idle would flash a stale background.
                         if let snap = revealCoverSnapshot,
-                           Date().timeIntervalSince(snap.takenAt) < 900 {
-                            cover = ConcealGhostOverlay.begin(from: snap, safety: 2.5)
+                           Date().timeIntervalSince(snap.takenAt) < AppTiming.revealCoverFreshness {
+                            cover = ConcealGhostOverlay.begin(from: snap, safety: AppTiming.transitionCoverSafety)
                         } else {
                             cover = await ConcealGhostOverlay.begin(
-                                over: revealCoverRect, safety: 2.5
+                                over: revealCoverRect, safety: AppTiming.transitionCoverSafety
                             )
                         }
                         revealCoverSnapshot = nil
@@ -987,10 +994,7 @@ final class AppState {
                         // each swap — a timed grace popped the cover mid-slide.
                         let fade = settings.revealAnimation == .fade
                         Task { @MainActor in
-                            let deadline = Date().addingTimeInterval(2)
-                            while Date() < deadline, await !engine.quiesced(for: 0.15) {
-                                try? await Task.sleep(for: .milliseconds(30))
-                            }
+                            await waitUntilQuiesced(interval: 0.15, deadline: 2, poll: .milliseconds(30))
                             if fade { cover.fadeOut() } else { cover.dismiss() }
                         }
                     }
@@ -1021,7 +1025,7 @@ final class AppState {
                     lastConcealedStripRect = strip
                     let ghost = settings.revealAnimation == .instant
                         ? nil
-                        : await ConcealGhostOverlay.begin(over: strip, safety: 2.5)
+                        : await ConcealGhostOverlay.begin(over: strip, safety: AppTiming.transitionCoverSafety)
                     NookLog.log("effect conceal → engine")
                     await engine.conceal()
                     snapshot = await engine.snapshot()
@@ -1032,10 +1036,7 @@ final class AppState {
                         // the chevron, Fade dissolves in place.
                         let slide = settings.revealAnimation == .smooth
                         Task { @MainActor in
-                            let deadline = Date().addingTimeInterval(2)
-                            while Date() < deadline, await !engine.quiesced(for: 0.15) {
-                                try? await Task.sleep(for: .milliseconds(30))
-                            }
+                            await waitUntilQuiesced(interval: 0.15, deadline: 2, poll: .milliseconds(30))
                             ghost.fadeOut(slide: slide)
                         }
                     }
@@ -1089,11 +1090,11 @@ final class AppState {
             // in-flight transitions block; a settled bar has stable frames.
             // The old post-settle quiet window starved adoption entirely.)
             if isTransitioning {
-                guard retry < 10 else {
+                guard retry < AppTiming.adoptMaxDeferrals else {
                     NookLog.log("adopt: gave up after \(retry) deferrals")
                     return
                 }
-                try? await Task.sleep(for: .milliseconds(300))
+                try? await Task.sleep(for: AppTiming.adoptDeferralDelay)
                 adoptSectionsFromBar(retry: retry + 1)
                 return
             }
@@ -1101,7 +1102,7 @@ final class AppState {
             // externalOrderChange as a manual drag — adopting the mid-rebuild
             // bar would overwrite the model order the rebuild is applying,
             // and the two fight across the next several reveals.
-            if Date().timeIntervalSince(lastOrderApplyAt) < 8 {
+            if Date().timeIntervalSince(lastOrderApplyAt) < AppTiming.orderApplyAdoptWindow {
                 NookLog.log("adopt: skipped — order apply settling")
                 return
             }
@@ -1162,14 +1163,7 @@ final class AppState {
         // the last line of defense if called on a stale path.
         guard !isTransitioning else { return }
         let nookBundle = Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
-        guard
-            let chevron = snap.items.first(where: {
-                $0.id.bundleID == nookBundle
-                    && !MenuBarPolicy.isNookExtraID($0.id)
-                    && !$0.id.rawValue.contains("Separator")
-            }),
-            let chevronX = chevron.frame?.minX
-        else { return }
+        guard let chevronX = nookChevronItem(in: snap)?.frame?.minX else { return }
 
         let isFirstPass = lastAdoptionZones.isEmpty
         NookLog.log("adopt: chevronX=\(chevronX) firstPass=\(isFirstPass) trackedZones=\(lastAdoptionZones.count)")

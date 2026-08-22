@@ -88,13 +88,7 @@ struct MenuBarTab: View {
             appState.reveal([.hidden, .alwaysHidden], reason: .settingsPreview)
         }
         .onDisappear {
-            // Same rule as settings-close: the pointer display's policy wins —
-            // an unconditional conceal collapsed always-show displays.
-            if appState.pointerDisplayBehavior == .alwaysShowAll {
-                appState.reveal([.hidden], reason: .displayPolicy)
-            } else {
-                appState.concealNow()
-            }
+            appState.applyPointerDisplayPolicyAfterDismissal()
         }
     }
 }
