@@ -30,7 +30,7 @@ final class TransitionCoordinator {
     /// Empty-strip snapshot pre-captured while the bar idles concealed — the
     /// reveal path floats it synchronously instead of paying ~100ms+ of SCK
     /// capture before the swap can even start (snappiness).
-    private var revealCoverSnapshot: ConcealGhostOverlay.BarSnapshot?
+    private var revealCoverSnapshot: [ConcealGhostOverlay.BarSnapshot] = []
 
     /// The reveal cover's footprint: the remembered strip, padded generously —
     /// left is the slide origin (empty bar, free to cover), right catches the
@@ -50,21 +50,21 @@ final class TransitionCoordinator {
             // or fades (Fade) away once the swap lands. The strip rect
             // is remembered from the last conceal (icons reappear
             // where they left); no memory yet → the slide shows.
-            var cover: ConcealGhostOverlay?
+            var cover: ConcealGhostOverlay.GhostSet?
             if appState.settings.revealAnimation != .smooth {
-                // Pre-captured snapshot floats synchronously; only
+                // Pre-captured snapshots float synchronously; only
                 // fall back to a live capture when none is cached.
                 // Freshness cap: an appearance/wallpaper change
                 // while idle would flash a stale background.
-                if let snap = revealCoverSnapshot,
-                   Date().timeIntervalSince(snap.takenAt) < AppTiming.revealCoverFreshness {
-                    cover = ConcealGhostOverlay.begin(from: snap, safety: AppTiming.transitionCoverSafety)
+                if let first = revealCoverSnapshot.first,
+                   Date().timeIntervalSince(first.takenAt) < AppTiming.revealCoverFreshness {
+                    cover = ConcealGhostOverlay.begin(from: revealCoverSnapshot, safety: AppTiming.transitionCoverSafety)
                 } else {
                     cover = await ConcealGhostOverlay.begin(
                         over: revealCoverRect, safety: AppTiming.transitionCoverSafety
                     )
                 }
-                revealCoverSnapshot = nil
+                revealCoverSnapshot = []
             }
             NookLog.log("effect reveal \(sections) → engine (anim=\(appState.settings.revealAnimation.rawValue), cover=\(cover != nil))")
             await engine.reveal(sections)
@@ -135,7 +135,7 @@ final class TransitionCoordinator {
             guard !Task.isCancelled,
                   appState.currentRevealedSections.isEmpty, !ConcealGhostOverlay.stripActive
             else { return }
-            revealCoverSnapshot = await ConcealGhostOverlay.snapshot(of: revealCoverRect)
+            revealCoverSnapshot = await ConcealGhostOverlay.snapshotSet(of: revealCoverRect)
         }
     }
 

@@ -209,6 +209,9 @@ final class PlacementController {
         }
         // Post-drag verification looks the item up by its LIVE id.
         let liveID = item.id
+        // Primary display by design: the engine's canonical frames are the
+        // primary band and every bar mirrors the one order — drags here move
+        // all displays.
         guard let screen = NSScreen.screens.first else { return false }
         // Trapped-in-overflow check: a trapped registration reports a phantom
         // frame sharing its minX with another item in the same band — real

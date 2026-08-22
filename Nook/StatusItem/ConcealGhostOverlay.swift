@@ -50,20 +50,28 @@ enum AlphaFade {
 
 @MainActor
 final class ConcealGhostOverlay {
-    /// True while a strip overlay is covering the bar — SeparatorManager and
+    /// True while any strip overlay is covering a bar — SeparatorManager and
     /// ExtrasManager skip their per-item ghosts (the strip already shows their
-    /// glyphs; a second fading copy would double-expose).
-    static var stripActive: Bool { currentStrip != nil }
-    /// The strip currently covering the bar. Instance-tracked, not a bool:
-    /// with back-to-back conceals, an OLDER strip's fade completion must not
-    /// clear the flag while a newer strip is still up.
-    private static weak var currentStrip: ConcealGhostOverlay?
+    /// glyphs; a second fading copy would double-expose). Count-tracked: with
+    /// back-to-back conceals, an OLDER strip's fade completion must not clear
+    /// the flag while a newer strip is still up.
+    static var stripActive: Bool { activeStripCount > 0 }
+    private static var activeStripCount = 0
+
+    /// One cover per display: the assertion swaps EVERY display's bar at
+    /// once, so each bar gets its own strip. Forwarding wrapper so callers
+    /// keep the single-cover call shape.
+    struct GhostSet {
+        fileprivate let overlays: [ConcealGhostOverlay]
+        func dismiss() { for overlay in overlays { overlay.dismiss() } }
+        func fadeOut(slide: Bool = false) { for overlay in overlays { overlay.fadeOut(slide: slide) } }
+    }
 
     /// SCShareableContent lookup is the slow part (can be 100ms+) — cache the
-    /// display handle so repeat conceals only pay for the capture itself.
+    /// display handles so repeat conceals only pay for the captures.
     /// Invalidated on display reconfiguration: a stale SCDisplay makes every
     /// capture fail (no hide animation) or capture wrong geometry.
-    private static var cachedDisplay: SCDisplay?
+    private static var cachedDisplays: [CGDirectDisplayID: SCDisplay] = [:]
     private static var reconfigureObserver: NSObjectProtocol?
 
     static func prewarmDisplay() {
@@ -73,91 +81,112 @@ final class ConcealGhostOverlay {
                 object: nil, queue: .main
             ) { _ in
                 Task { @MainActor in
-                    cachedDisplay = nil
-                    _ = await display()
+                    cachedDisplays = [:]
+                    _ = await scDisplay(for: CGMainDisplayID())
                 }
             }
         }
-        Task { _ = await display() }
+        Task { _ = await scDisplay(for: CGMainDisplayID()) }
     }
 
-    private static func display() async -> SCDisplay? {
-        if let cachedDisplay { return cachedDisplay }
-        guard
-            let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true),
-            let display = content.displays.first(where: { $0.displayID == CGMainDisplayID() })
+    private static func scDisplay(for id: CGDirectDisplayID) async -> SCDisplay? {
+        if let cached = cachedDisplays[id] { return cached }
+        guard let content = try? await SCShareableContent.excludingDesktopWindows(false, onScreenWindowsOnly: true)
         else { return nil }
-        cachedDisplay = display
-        return display
+        for display in content.displays {
+            cachedDisplays[display.displayID] = display
+        }
+        return cachedDisplays[id]
     }
 
     private let window: NSWindow
     private let imageView: NSImageView
     private var finished = false
+    private var stoodDown = false
 
     /// A captured strip image ready to float — reveal covers pre-capture at
     /// conceal settle so the reveal path pays zero capture latency.
     struct BarSnapshot: @unchecked Sendable {
         let image: CGImage
-        let capture: CGRect
+        /// Cocoa bottom-left global — where this display's cover floats.
+        let windowFrame: NSRect
         let takenAt: Date
     }
 
-    /// Capture `rect` (AX global top-left coordinates, main display). Returns
-    /// nil when capture is unavailable — callers then run uncovered, never
-    /// blocked.
-    static func snapshot(of rect: CGRect?) async -> BarSnapshot? {
+    /// Capture the strip on every display. `rect` is the primary-band strip
+    /// in AX global top-left coordinates (the engine's canonical frames);
+    /// other bars mirror the same items against their own trailing edge, so
+    /// the rect translates right-anchored (the notch only eats the leading
+    /// side). Empty result → callers run uncovered, never blocked.
+    static func snapshotSet(of rect: CGRect?) async -> [BarSnapshot] {
         guard
             let rect, rect.width > 8,
             CGPreflightScreenCaptureAccess(),
-            let primary = NSScreen.screens.first,
-            let display = await display()
-        else { return nil }
+            let primary = NSScreen.screens.first
+        else { return [] }
 
-        // Pad horizontally and take the full bar height so the snapshot's
-        // background is continuous with the bar around it.
-        let bandHeight = max(rect.maxY, primary.frame.maxY - primary.visibleFrame.maxY)
-        let capture = CGRect(
-            x: max(0, rect.minX - 6), y: 0,
-            width: min(rect.width + 12, CGFloat(display.width) - max(0, rect.minX - 6)),
-            height: bandHeight
-        )
-        let filter = SCContentFilter(display: display, excludingWindows: [])
-        let config = SCStreamConfiguration()
-        config.sourceRect = capture
-        config.width = Int(capture.width) * 2
-        config.height = Int(capture.height) * 2
-        config.showsCursor = false
-        guard let shot = try? await SCScreenshotManager.captureImage(
-            contentFilter: filter, configuration: config
-        ) else {
-            NookLog.log("ghost: strip capture failed — running uncovered")
-            return nil
+        var shots: [BarSnapshot] = []
+        for screen in NSScreen.screens {
+            guard let displayID = screen.directDisplayID,
+                  let display = await scDisplay(for: displayID) else { continue }
+            let bounds = CGDisplayBounds(displayID)  // CG top-left global
+            // Bar heights differ per display (37pt notched builtin, 24pt
+            // externals) — take each display's own band; visibleFrame can
+            // collapse under full-screen apps, so fall back to the strip's.
+            let ownBand = screen.frame.maxY - screen.visibleFrame.maxY
+            let bandHeight = screen == primary
+                ? max(rect.maxY, ownBand)
+                : (ownBand > 0 ? ownBand : rect.maxY)
+            // Right-anchored translation onto this display, padded so the
+            // snapshot's background is continuous with the bar around it.
+            let translatedX = rect.minX + (screen.frame.maxX - primary.frame.maxX)
+            let globalX = max(bounds.minX, translatedX - 6)
+            let width = min(rect.width + 12, bounds.maxX - globalX)
+            guard width > 8, bandHeight > 0 else { continue }
+            // sourceRect is display-local top-left; the bar spans the top band.
+            let capture = CGRect(x: globalX - bounds.minX, y: 0, width: width, height: bandHeight)
+            let filter = SCContentFilter(display: display, excludingWindows: [])
+            let config = SCStreamConfiguration()
+            config.sourceRect = capture
+            // The display's own scale — a hardcoded ×2 half-sized the strip
+            // on 1× externals.
+            let scale = screen.backingScaleFactor
+            config.width = Int(capture.width * scale)
+            config.height = Int(capture.height * scale)
+            config.showsCursor = false
+            guard let shot = try? await SCScreenshotManager.captureImage(
+                contentFilter: filter, configuration: config
+            ) else {
+                NookLog.log("ghost: strip capture failed on display \(displayID) — it runs uncovered")
+                continue
+            }
+            shots.append(BarSnapshot(
+                image: shot,
+                windowFrame: NSRect(
+                    x: globalX, y: screen.frame.maxY - bandHeight,
+                    width: width, height: bandHeight
+                ),
+                takenAt: Date()
+            ))
         }
-        return BarSnapshot(image: shot, capture: capture, takenAt: Date())
+        return shots
     }
 
     /// Capture now and float immediately. Call `fadeOut()`/`dismiss()` once
     /// the swap beneath has been issued; a safety timeout fades regardless.
-    static func begin(over rect: CGRect?, safety: TimeInterval = 0.5) async -> ConcealGhostOverlay? {
-        guard let snap = await snapshot(of: rect) else { return nil }
-        return begin(from: snap, safety: safety)
+    static func begin(over rect: CGRect?, safety: TimeInterval = 0.5) async -> GhostSet? {
+        begin(from: await snapshotSet(of: rect), safety: safety)
     }
 
-    /// Float a pre-captured snapshot — synchronous, zero capture latency.
-    static func begin(from snap: BarSnapshot, safety: TimeInterval = 0.5) -> ConcealGhostOverlay? {
-        guard let primary = NSScreen.screens.first else { return nil }
-        return ConcealGhostOverlay(shot: snap.image, capture: snap.capture, primary: primary, safety: safety)
+    /// Float pre-captured snapshots — synchronous, zero capture latency.
+    static func begin(from snaps: [BarSnapshot], safety: TimeInterval = 0.5) -> GhostSet? {
+        guard !snaps.isEmpty else { return nil }
+        return GhostSet(overlays: snaps.map { ConcealGhostOverlay(snapshot: $0, safety: safety) })
     }
 
-    private init(shot: CGImage, capture: CGRect, primary: NSScreen, safety: TimeInterval) {
-        // AX top-left → Cocoa bottom-left.
-        let frame = NSRect(
-            x: capture.minX,
-            y: primary.frame.maxY - capture.maxY,
-            width: capture.width,
-            height: capture.height
-        )
+    private init(snapshot: BarSnapshot, safety: TimeInterval) {
+        let frame = snapshot.windowFrame
+        let shot = snapshot.image
         window = NSWindow(contentRect: frame, styleMask: .borderless, backing: .buffered, defer: false)
         window.isOpaque = false
         window.backgroundColor = .clear
@@ -172,12 +201,19 @@ final class ConcealGhostOverlay {
         window.contentView = imageView
         window.orderFrontRegardless()
         window.displayIfNeeded()
-        Self.currentStrip = self
-        NookLog.log("ghost: strip up \(Int(capture.width))×\(Int(capture.height))")
+        Self.activeStripCount += 1
+        NookLog.log("ghost: strip up \(Int(frame.width))×\(Int(frame.height)) @x=\(Int(frame.minX))")
         // Safety: never leave a stale cover if the caller's task dies.
         DispatchQueue.main.asyncAfter(deadline: .now() + safety) { [weak self] in
             self?.fadeOut()
         }
+    }
+
+    /// One decrement per overlay, however it ends.
+    private func standDown() {
+        guard !stoodDown else { return }
+        stoodDown = true
+        Self.activeStripCount -= 1
     }
 
     /// Drop the cover with no animation — the Instant reveal style: whatever
@@ -186,9 +222,7 @@ final class ConcealGhostOverlay {
         guard !finished else { return }
         finished = true
         window.orderOut(nil)
-        if Self.currentStrip === self {
-            Self.currentStrip = nil
-        }
+        standDown()
     }
 
     /// Fade the cover out — ease-in (holds visibility, then accelerates away),
@@ -211,13 +245,12 @@ final class ConcealGhostOverlay {
             layer.add(anim, forKey: "nookSlideOut")
             layer.position.x += shift
         }
-        AlphaFade.run(imageView, to: 0, duration: Self.dismissDuration, controlPoints: (0.55, 0, 0.8, 0.4)) { [window, weak self] in
+        // Strong self: the completion is the count's decrement — a weak
+        // capture could leak activeStripCount high and suppress per-item
+        // ghosts forever.
+        AlphaFade.run(imageView, to: 0, duration: Self.dismissDuration, controlPoints: (0.55, 0, 0.8, 0.4)) { [window, self] in
             window.orderOut(nil)
-            // Only the strip that is still current stands down the flag — an
-            // older strip finishing must not expose a newer one's cover.
-            if let self, Self.currentStrip === self {
-                Self.currentStrip = nil
-            }
+            self.standDown()
         }
     }
 }

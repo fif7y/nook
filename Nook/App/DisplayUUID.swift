@@ -35,14 +35,14 @@ private enum DisplayUUIDCache {
 }
 
 extension NSScreen {
+    var directDisplayID: CGDirectDisplayID? {
+        (deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value
+    }
+
     @MainActor
     var displayUUIDString: String? {
-        guard
-            let number = deviceDescription[
-                NSDeviceDescriptionKey("NSScreenNumber")
-            ] as? NSNumber
-        else { return nil }
-        return DisplayUUIDCache.uuid(for: number.uint32Value)
+        guard let id = directDisplayID else { return nil }
+        return DisplayUUIDCache.uuid(for: id)
     }
 
     /// The screen containing a point (bottom-left global coordinates).

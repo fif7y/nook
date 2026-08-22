@@ -31,6 +31,8 @@ enum OverflowChevron {
     /// looking for the agent-owned toggle. ~6pt steps cannot skip the
     /// ~17pt button.
     nonisolated private static func find() -> Toggle? {
+        // Primary display by design: synthetic drags (the only mover) run on
+        // the primary bar, so its « is the one to expand.
         guard let screen = NSScreen.screens.first else { return nil }
         let systemWide = AXUIElementCreateSystemWide()
         var x = screen.frame.midX
