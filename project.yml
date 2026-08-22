@@ -39,6 +39,7 @@ targets:
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         LSMinimumSystemVersion: $(MACOSX_DEPLOYMENT_TARGET)
         LSUIElement: true
+        LSApplicationCategoryType: public.app-category.utilities
         NSPrincipalClass: NSApplication
         NSHumanReadableCopyright: "© 2026 Gabriel Faucon"
         SUFeedURL: https://fif7y.github.io/nook/appcast.xml
