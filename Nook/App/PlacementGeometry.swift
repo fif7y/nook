@@ -20,6 +20,7 @@ enum PlacementGeometry {
         chevron: CGRect?,
         section: NookCore.Section,
         managedMinX: CGFloat?,
+        systemMinX: CGFloat? = nil,
         screenMaxX: CGFloat
     ) -> CGFloat? {
         var targetX: CGFloat
@@ -49,6 +50,16 @@ enum PlacementGeometry {
             case .hidden, .alwaysHidden:
                 targetX = min(targetX, chevron.minX - 12)
             }
+        }
+        // The trailing system cluster (Control Center, Clock, pinned
+        // menuextras) is protected — even a real ⌘-drag can't drop right of
+        // it. Model order can still place an item "before" a system member
+        // (system items hide/show but never physically move), which computes
+        // a target inside the cluster; the closest POSSIBLE slot is just
+        // left of it. Verified live 2026-08-21: drops at 1492/1522 (inside
+        // the cluster) bounced entirely.
+        if let systemMinX {
+            targetX = min(targetX, systemMinX - 12)
         }
         return targetX
     }

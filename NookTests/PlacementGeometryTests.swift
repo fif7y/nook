@@ -83,6 +83,17 @@ struct PlacementGeometryTests {
         #expect(x == 138)
     }
 
+    @Test func systemClusterClampAppliesLast() {
+        // Midpoint (1465) sits inside the protected trailing cluster —
+        // clamp to just left of it (1450 − 12).
+        let x = PlacementGeometry.targetX(
+            leftNeighbor: rect(1400), rightNeighbor: rect(1500),
+            chevron: nil, section: .hidden, managedMinX: nil,
+            systemMinX: 1450, screenMaxX: maxX
+        )
+        #expect(x == 1438)
+    }
+
     @Test func inSlotChecksOrderAgainstPresentNeighborsOnly() {
         #expect(PlacementGeometry.inSlot(x: 450, leftMidX: 400, rightMidX: 500))
         #expect(!PlacementGeometry.inSlot(x: 390, leftMidX: 400, rightMidX: 500))

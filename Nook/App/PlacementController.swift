@@ -110,9 +110,16 @@ final class PlacementController {
             .filter { !MenuBarPolicy.isUnmanagedAppleBundle($0.id.bundleID) && !$0.id.isSystemModule }
             .compactMap(\.frame?.minX)
             .min()
+        let systemMinX = snap.items
+            .filter { MenuBarPolicy.isUnmanagedAppleBundle($0.id.bundleID) || $0.id.isSystemModule }
+            .compactMap(\.frame)
+            .filter(usable)
+            .map(\.minX)
+            .min()
         guard let targetX = PlacementGeometry.targetX(
             leftNeighbor: left, rightNeighbor: right, chevron: chevron,
-            section: section, managedMinX: managedMinX, screenMaxX: screen.frame.maxX
+            section: section, managedMinX: managedMinX, systemMinX: systemMinX,
+            screenMaxX: screen.frame.maxX
         ) else {
             NookLog.log("place: overflow rescue \(id.rawValue) — no anchor, skipping")
             return false
@@ -229,12 +236,19 @@ final class PlacementController {
             .filter { !MenuBarPolicy.isUnmanagedAppleBundle($0.id.bundleID) && !$0.id.isSystemModule }
             .compactMap(\.frame?.minX)
             .min()
+        let systemMinX = snap.items
+            .filter { MenuBarPolicy.isUnmanagedAppleBundle($0.id.bundleID) || $0.id.isSystemModule }
+            .compactMap(\.frame)
+            .filter(inBand)
+            .map(\.minX)
+            .min()
         guard let targetX = PlacementGeometry.targetX(
             leftNeighbor: leftNeighbor,
             rightNeighbor: rightNeighbor,
             chevron: chevronFrame,
             section: section,
             managedMinX: managedMinX,
+            systemMinX: systemMinX,
             screenMaxX: screen.frame.maxX
         ) else {
             NookLog.log("place: no live neighbors and no chevron for \(id.rawValue) — skipping")

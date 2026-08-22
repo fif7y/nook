@@ -31,9 +31,12 @@ public enum ItemMover {
         post(.leftMouseDown, at: from)
         // Hold briefly so the drag registers as a deliberate grab.
         try? await Task.sleep(for: .milliseconds(180))
-        // Ease toward the target in a few steps — single-jump drags are
-        // sometimes ignored by the bar.
-        let steps = 6
+        // Ease toward the target — single-jump drags are sometimes ignored,
+        // and LONG drags need finer motion for the agent to track slot
+        // crossings (a fixed-6-step 440pt drag = 74pt jumps bounced entirely,
+        // verified live 2026-08-21).
+        let distance = abs(to.x - from.x) + abs(to.y - from.y)
+        let steps = min(24, max(6, Int(distance / 40)))
         for step in 1...steps {
             let t = CGFloat(step) / CGFloat(steps)
             let x = from.x + (to.x - from.x) * t
