@@ -32,4 +32,7 @@ enum AppTiming {
     /// Precapture waits this long after quiesce so the ghost's fade never
     /// bakes into the snapshot.
     static let precaptureGhostClearance: Duration = .milliseconds(300)
+    /// Rescue force-show → measure: the attach + fade + agent reflow must
+    /// finish or the frame still reads as a phantom (burned attempt 1 live).
+    static let rescueForceShowSettle: Duration = .milliseconds(600)
 }

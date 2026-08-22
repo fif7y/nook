@@ -126,6 +126,9 @@ final class PlacementController {
                 guard let appState else { return }
                 activePlacements += 1
                 let forced = appState.forceShowSeparator(id)
+                // Let the attach + reflow finish — measuring a mid-attach
+                // frame reads as a phantom and burns the attempt.
+                if forced { try? await Task.sleep(for: AppTiming.rescueForceShowSettle) }
                 let placed = await physicallyPlace(
                     id, in: appState.settings.sectionModel.section(of: id)
                 )

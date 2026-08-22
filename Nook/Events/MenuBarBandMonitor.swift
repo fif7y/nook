@@ -222,6 +222,11 @@ final class MenuBarBandMonitor {
         let inBand = screen.map { isInMenuBarBand(location, of: $0) } ?? false
 
         if inBand {
+            // Synthetic placement drags post real ⌘-mouse-downs in the band —
+            // the hit-test can read one as an empty-area click (a trapped
+            // item's phantom position has no element under it) and toggle a
+            // reveal under the running drag (seen live during rescue).
+            guard !appState.syntheticDragInFlight else { return }
             guard isEmptyMenuBarArea(location, on: screen) else { return }
             if event.type == .rightMouseDown {
                 // Right-click on empty bar: always-available settings entry.
