@@ -25,7 +25,7 @@ final class SeparatorManager {
 
     static func itemID(for spec: SeparatorSpec) -> ItemID {
         .status(
-            bundle: Bundle.main.bundleIdentifier ?? NookBundle.fallbackID,
+            bundle: NookBundle.mainID,
             title: "Nook.Separator.\(spec.id.uuidString)"
         )
     }

@@ -22,8 +22,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appState.start()
     }
 
-    func applicationWillTerminate(_ notification: Notification) {
-        appState.stopBlocking()
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        appState.beginTermination()
+        return .terminateLater
     }
 
     /// Relaunching Nook (Finder/Spotlight) while it runs opens Settings —

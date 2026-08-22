@@ -23,6 +23,8 @@ enum AppTiming {
     static let dragAdoptDelay: TimeInterval = 0.35
     /// Rehide re-arm while deferred (pointer in band / elevated window).
     static let rehideDeferRearm: TimeInterval = 1.5
+    /// Termination: max wait for engine.stop() before replying anyway.
+    static let terminationStopDeadline: TimeInterval = 2
     /// Physical placement: pre-measure bar settle, then bounded lookup
     /// retries for a freshly-shown item, then post-drag reflow settle.
     static let placementPreSettle: Duration = .milliseconds(450)

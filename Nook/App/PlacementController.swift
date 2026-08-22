@@ -199,7 +199,7 @@ final class PlacementController {
             snap = await engine.snapshot()
             appState.updateSnapshot(snap)
         }
-        let nookBundle = Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
+        let nookBundle = NookBundle.mainID
         guard
             let item = liveItem(in: snap),
             let frame = item.frame

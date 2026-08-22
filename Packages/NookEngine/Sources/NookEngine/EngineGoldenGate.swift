@@ -57,7 +57,7 @@ public actor EngineGoldenGate: MenuBarEngine {
     /// id, computed once.
     public static let identityExemptBundles: Set<String> =
         MenuBarPolicy.identityExemptBundles(
-            nookBundleID: Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
+            nookBundleID: NookBundle.mainID
         )
 
     private var lastSnapshot: EngineSnapshot?
@@ -286,9 +286,23 @@ public actor EngineGoldenGate: MenuBarEngine {
         AXUIElementCopyAttributeValue(
             extrasBar as! AXUIElement, kAXChildrenAttribute as CFString, &childrenValue
         )
-        guard let children = childrenValue as? [AXUIElement], let target = children.first else {
+        guard let children = childrenValue as? [AXUIElement], !children.isEmpty else {
             return false
         }
+        // A6: match the tag's title against the app's own extras children —
+        // children.first is the wrong item for multi-item apps. Title falls
+        // back to first for single-item apps and untitled elements. (Dead
+        // code until M5 wires the notch bar; M5 must verify the AXTitle
+        // choice live before relying on it.)
+        var target = children.first
+        if children.count > 1, case .status(_, let title) = item.parsed {
+            target = children.first { child in
+                var titleValue: CFTypeRef?
+                AXUIElementCopyAttributeValue(child, kAXTitleAttribute as CFString, &titleValue)
+                return (titleValue as? String) == title
+            } ?? children.first
+        }
+        guard let target else { return false }
         let action = rightClick ? "AXShowMenu" : kAXPressAction
         return AXUIElementPerformAction(target, action as CFString) == .success
     }

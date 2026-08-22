@@ -63,7 +63,7 @@ final class ExtrasManager {
 
     static func itemID(for spec: ExtraItemSpec) -> ItemID {
         .status(
-            bundle: Bundle.main.bundleIdentifier ?? NookBundle.fallbackID,
+            bundle: NookBundle.mainID,
             title: spec.itemTitle
         )
     }
@@ -358,8 +358,11 @@ final class CameraMicMonitor {
     private(set) var lastAudioActiveAt: Date = .distantPast
     private var timer: Timer?
     private let onChange: () -> Void
-    private var audioListenerDevices: [AudioObjectID] = []
-    private var cmioListenerDevices: [CMIOObjectID] = []
+    // nonisolated(unsafe): mutated only on the main actor (install/remove),
+    // but deinit must read them to unhook the HAL — Swift 6 bars isolated
+    // property access from deinitializers.
+    private nonisolated(unsafe) var audioListenerDevices: [AudioObjectID] = []
+    private nonisolated(unsafe) var cmioListenerDevices: [CMIOObjectID] = []
     // C-function-pointer listeners, NOT the *ListenerBlock variants: the HAL
     // matches removals by block identity, and Swift re-bridges a closure to a
     // fresh block object on every call — so block removals never matched,
@@ -367,7 +370,7 @@ final class CameraMicMonitor {
     // out into a main-thread reinstall storm (the 2026-08-21 beachball).
     // Function pointer + clientData compare reliably. Callbacks arrive on a
     // HAL thread; hop to main before touching state.
-    private static let audioListenerProc: AudioObjectPropertyListenerProc = { _, count, addresses, clientData in
+    private nonisolated static let audioListenerProc: AudioObjectPropertyListenerProc = { _, count, addresses, clientData in
         guard let clientData else { return noErr }
         let monitor = Unmanaged<CameraMicMonitor>.fromOpaque(clientData).takeUnretainedValue()
         let listChanged = UnsafeBufferPointer(start: addresses, count: Int(count))
@@ -377,7 +380,7 @@ final class CameraMicMonitor {
         }
         return noErr
     }
-    private static let cmioListenerProc: CMIOObjectPropertyListenerProc = { _, count, addresses, clientData in
+    private nonisolated static let cmioListenerProc: CMIOObjectPropertyListenerProc = { _, count, addresses, clientData in
         guard let clientData else { return noErr }
         let monitor = Unmanaged<CameraMicMonitor>.fromOpaque(clientData).takeUnretainedValue()
         let listChanged = UnsafeBufferPointer(start: addresses, count: Int(count))
@@ -410,8 +413,19 @@ final class CameraMicMonitor {
         poll()
     }
 
-    // No deinit: the monitor lives as long as its ExtrasManager entry; the
-    // timer is invalidated in stop() when the indicator item is removed.
+    // stop() is the normal teardown (ExtrasManager removes the entry);
+    // deinit is the guard rail — a release without stop() would leave the
+    // HAL dispatching to a dangling clientData pointer. The timer is left
+    // to its weak-self no-op (invalidating cross-thread from deinit is
+    // unsafe); the HAL pointer is the real hazard.
+    deinit {
+        Self.removeCListeners(
+            selfPtr: Unmanaged.passUnretained(self).toOpaque(),
+            audioDevices: audioListenerDevices,
+            cmioDevices: cmioListenerDevices
+        )
+    }
+
     func stop() {
         timer?.invalidate()
         timer = nil
@@ -469,7 +483,23 @@ final class CameraMicMonitor {
     }
 
     private func removeListeners() {
-        let selfPtr = Unmanaged.passUnretained(self).toOpaque()
+        Self.removeCListeners(
+            selfPtr: Unmanaged.passUnretained(self).toOpaque(),
+            audioDevices: audioListenerDevices,
+            cmioDevices: cmioListenerDevices
+        )
+        audioListenerDevices = []
+        cmioListenerDevices = []
+    }
+
+    /// Static + nonisolated so deinit can reach it: removal matches by
+    /// (proc, clientData) identity, so it needs only the pointer and the
+    /// device lists — not isolated state access.
+    private nonisolated static func removeCListeners(
+        selfPtr: UnsafeMutableRawPointer,
+        audioDevices: [AudioObjectID],
+        cmioDevices cmioDeviceList: [CMIOObjectID]
+    ) {
         var runningAddress = AudioObjectPropertyAddress(
             mSelector: kAudioDevicePropertyDeviceIsRunningSomewhere,
             mScope: kAudioObjectPropertyScopeGlobal,
@@ -483,10 +513,9 @@ final class CameraMicMonitor {
         AudioObjectRemovePropertyListener(
             AudioObjectID(kAudioObjectSystemObject), &devicesAddress, Self.audioListenerProc, selfPtr
         )
-        for deviceID in audioListenerDevices {
+        for deviceID in audioDevices {
             AudioObjectRemovePropertyListener(deviceID, &runningAddress, Self.audioListenerProc, selfPtr)
         }
-        audioListenerDevices = []
 
         var cmioRunning = CMIOObjectPropertyAddress(
             mSelector: CMIOObjectPropertySelector(kCMIODevicePropertyDeviceIsRunningSomewhere),
@@ -501,10 +530,9 @@ final class CameraMicMonitor {
         CMIOObjectRemovePropertyListener(
             CMIOObjectID(kCMIOObjectSystemObject), &cmioDevices, Self.cmioListenerProc, selfPtr
         )
-        for deviceID in cmioListenerDevices {
+        for deviceID in cmioDeviceList {
             CMIOObjectRemovePropertyListener(deviceID, &cmioRunning, Self.cmioListenerProc, selfPtr)
         }
-        cmioListenerDevices = []
     }
 
     private static func allAudioDeviceIDs() -> [AudioObjectID] {

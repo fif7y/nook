@@ -11,6 +11,10 @@ public enum NookBundle {
     /// Nook's bundle id where Bundle.main has none (unit tests, probes).
     public static let fallbackID = "app.fif7y.Nook"
     public static let agentID = "com.apple.MenuBarAgent"
+    /// The one canonical "Nook's own bundle id" (A10): Bundle.main's, with
+    /// the fallback for hosts that have none. Use this — never hand-roll the
+    /// `??` (or forget it, as one comparison site did).
+    public static let mainID = Bundle.main.bundleIdentifier ?? fallbackID
 }
 
 /// The 9 system items macOS 27's assessment configuration can individually
@@ -25,6 +29,12 @@ public enum SystemItem: Int, CaseIterable, Sendable {
     case volume = 5
     case wifi = 6
     case screenMirroring = 7
+    /// Control Center ("bento box" is its internal name). Deliberately
+    /// unmapped in systemItem(for:) — the agent keeps Control Center visible
+    /// under any assertion regardless of allowlist (verified fc3f64c: the
+    /// identifier space truly stops at 8; CC-pinned modules collateral-hide,
+    /// CC itself never does). Kept to document the raw MBSystemItemIdentifier
+    /// range, not to be produced.
     case primaryBentoBox = 8
 }
 

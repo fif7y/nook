@@ -215,17 +215,27 @@ final class AppState {
         }
     }
 
-    /// Synchronous best-effort teardown for app termination: dropping the
-    /// assertion restores the user's menubar.
-    func stopBlocking() {
+    /// Async teardown for app termination: dropping the assertion restores
+    /// the user's menubar. Caller returned .terminateLater — this replies
+    /// when the engine has stopped, or at the deadline, whichever first
+    /// (formerly a main-actor-blocking semaphore).
+    private var terminationReplied = false
+    func beginTermination() {
         rehideTimer?.invalidate()
         eventTask?.cancel()
-        let semaphore = DispatchSemaphore(value: 0)
-        Task.detached { [engine] in
+        Task { [engine] in
             await engine.stop()
-            semaphore.signal()
+            self.replyTerminate()
         }
-        _ = semaphore.wait(timeout: .now() + 2)
+        DispatchQueue.main.asyncAfter(deadline: .now() + AppTiming.terminationStopDeadline) { [weak self] in
+            self?.replyTerminate()
+        }
+    }
+
+    private func replyTerminate() {
+        guard !terminationReplied else { return }
+        terminationReplied = true
+        NSApp.reply(toApplicationShouldTerminate: true)
     }
 
     // MARK: - Intents (UI + monitors call these)
@@ -453,7 +463,7 @@ final class AppState {
     /// Nook's chevron item in a snapshot — the visible/hidden boundary marker
     /// (never an extra or separator).
     func nookChevronItem(in snap: EngineSnapshot) -> ObservedItem? {
-        let nookBundle = Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
+        let nookBundle = NookBundle.mainID
         return snap.items.first(where: {
             $0.id.bundleID == nookBundle
                 && !MenuBarPolicy.isNookExtraID($0.id)
@@ -522,7 +532,7 @@ final class AppState {
             extraItems: settings.extraItems,
             separators: settings.separators,
             model: settings.sectionModel,
-            nookBundleID: Bundle.main.bundleIdentifier ?? NookBundle.fallbackID,
+            nookBundleID: NookBundle.mainID,
             isRunning: { app($0) != nil },
             appName: { app($0)?.localizedName }
         )
@@ -688,7 +698,7 @@ final class AppState {
     /// model-visible newcomer flaps sides of the chevron on every reveal.
     @discardableResult
     private func registerNewItems(from snap: EngineSnapshot) -> [ItemID] {
-        let nookBundle = Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
+        let nookBundle = NookBundle.mainID
         let candidates = snap.items.map(\.id).filter {
             guard let bundle = $0.bundleID else { return false }
             return bundle != nookBundle && !MenuBarPolicy.isUnmanagedAppleBundle(bundle)
@@ -719,7 +729,7 @@ final class AppState {
             items: snap.items.map { (id: $0.id, minX: $0.frame?.minX) },
             model: settings.sectionModel,
             previousZones: lastAdoptionZones,
-            nookBundleID: Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
+            nookBundleID: NookBundle.mainID
         ) else { return }
         for line in result.log { NookLog.log(line) }
         lastAdoptionZones = result.zones
