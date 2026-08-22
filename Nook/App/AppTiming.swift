@@ -6,8 +6,10 @@ import Foundation
 
 enum AppTiming {
     /// Order-apply cover must outlive the whole rebuild: restart settle
-    /// (~1.5s) + the engine's re-slot pulse (~1s when revealed) + quiesce.
-    static let orderApplyCoverSafety: TimeInterval = 7
+    /// (~1.5s) + a possibly launchd-THROTTLED respawn (up to ~12s when the
+    /// re-mint second pass restarts twice) + the re-slot pulse + quiesce.
+    /// Watchdog only — the cover normally drops at quiesce, long before this.
+    static let orderApplyCoverSafety: TimeInterval = 16
     /// Reveal/conceal cover watchdog.
     static let transitionCoverSafety: TimeInterval = 2.5
     /// Coalesces an editor-drop burst into ONE agent restart.

@@ -176,9 +176,7 @@ public actor EngineGoldenGate: MenuBarEngine {
         // covered variants look unslotted → gratuitous second restarts.
         let written = AgentPositionStore.writeOrder(orderedTags)
         AgentPositionStore.restartAgent()
-        // The agent takes a moment to come back; settle before re-observing.
-        try? await Task.sleep(for: .seconds(EngineTiming.agentRestartSettle))
-        _ = await refreshSnapshot()
+        await waitForAgentRespawn()
         // A freshly-booted agent lays live items back out where they sat — it
         // re-slots from the plist only when an item (re)enters layout. While
         // revealed (settings preview, hover) nothing re-enters, so the rebuild
@@ -198,6 +196,26 @@ public actor EngineGoldenGate: MenuBarEngine {
             await reveal(sections)
         }
         return Array(written.keys)
+    }
+
+    /// Post-restart gate: a blind settle sleep is NOT enough — launchd
+    /// throttles back-to-back respawns (the re-mint second pass kills the
+    /// agent twice within ~3s), leaving it dead for ~7s while the old 1.5s
+    /// sleep expired and the re-slot pulse fired into nothing (verified live
+    /// 2026-08-21: pulse at :52.9, agent lstart :59, bar kept the old order).
+    /// Wait for a running agent AND a non-empty AX walk before proceeding.
+    private func waitForAgentRespawn() async {
+        try? await Task.sleep(for: .seconds(EngineTiming.agentRestartSettle))
+        let deadline = Date().addingTimeInterval(EngineTiming.agentRespawnDeadline)
+        while Date() < deadline {
+            if !NSRunningApplication.runningApplications(
+                withBundleIdentifier: ItemEnumerator.agentBundleID
+            ).isEmpty, await !refreshSnapshot().items.isEmpty {
+                return
+            }
+            try? await Task.sleep(for: EngineTiming.agentRespawnPoll)
+        }
+        NookLog.log("applyOrder: agent respawn wait timed out — pulsing anyway")
     }
 
     public func click(_ item: ItemID, rightClick: Bool) async -> Bool {
