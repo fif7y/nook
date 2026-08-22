@@ -1014,7 +1014,6 @@ final class AppState {
                         }
                     }
                     NookLog.log("effect reveal settled")
-                    lastSettleAt = Date()
                     dispatch(rehide.handle(.transitionSettled))
                     settleCatchUp()
                     // Newcomers routed into a then-concealed section finally
@@ -1060,7 +1059,6 @@ final class AppState {
                         }
                     }
                     NookLog.log("effect conceal settled")
-                    lastSettleAt = Date()
                     dispatch(rehide.handle(.transitionSettled))
                     settleCatchUp()
                     scheduleRevealCoverPrecapture()
@@ -1139,9 +1137,6 @@ final class AppState {
     /// settings-assigned item still sitting in its old zone is never
     /// "corrected" back.
     private var lastAdoptionZones: [String: NookCore.Section] = [:]
-    /// Set on every reveal/conceal settle; adoption holds off while the bar is
-    /// mid-reflow.
-    private var lastSettleAt: Date = .distantPast
 
     private var isTransitioning: Bool {
         if case .transitioning = rehide.state { return true }

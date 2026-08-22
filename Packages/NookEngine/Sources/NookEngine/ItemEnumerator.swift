@@ -62,28 +62,6 @@ public actor ItemEnumerator {
         frame.minY > -5 && frame.minY < 50
     }
 
-    /// True when MenuBarAgent shows its native overflow chevron («).
-    func nativeOverflowVisible() -> Bool {
-        guard let agent = resolveAgent() else { return false }
-        guard let windows = copyAttribute(agent, kAXChildrenAttribute) as? [AXUIElement] else {
-            return false
-        }
-        for window in windows {
-            guard let groups = copyAttribute(window, kAXChildrenAttribute) as? [AXUIElement] else {
-                continue
-            }
-            for group in groups {
-                for child in children(of: group) {
-                    let identifier = copyAttribute(child, kAXIdentifierAttribute) as? String ?? ""
-                    if identifier.contains("overflow") {
-                        return true
-                    }
-                }
-            }
-        }
-        return false
-    }
-
     // MARK: - Internals
 
     private func resolveAgent() -> AXUIElement? {

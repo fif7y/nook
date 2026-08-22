@@ -49,34 +49,6 @@ public enum ItemIdentityResolver {
         return stale
     }
 
-    /// Remaps for stored model IDs whose bundle has exactly ONE live item
-    /// under a different ID — the stored ID is a stale alias of it.
-    /// Multi-item bundles are skipped: with several live twins there is no
-    /// way to tell which one a stored alias meant.
-    public static func aliasRemaps(
-        storedIDs: Set<ItemID>,
-        liveIDs: some Sequence<ItemID>,
-        exemptBundles: Set<String>
-    ) -> [ItemID: ItemID] {
-        var liveByBundle: [String: [ItemID]] = [:]
-        for id in liveIDs {
-            guard let bundle = id.bundleID else { continue }
-            liveByBundle[bundle, default: []].append(id)
-        }
-        var remaps: [ItemID: ItemID] = [:]
-        for stored in storedIDs {
-            guard let bundle = stored.bundleID,
-                  !exemptBundles.contains(bundle),
-                  let live = liveByBundle[bundle],
-                  !live.contains(stored),
-                  live.count == 1,
-                  let liveID = live.first
-            else { continue }
-            remaps[stored] = liveID
-        }
-        return remaps
-    }
-
     /// Among frame-nil (concealed) entries, twins sharing a bundle are one
     /// item plus stale aliases — the engine can't prune an alias until the
     /// item is next observed live, so displays collapse them: the ID the

@@ -148,18 +148,6 @@ public struct SectionModel: Codable, Equatable, Sendable {
         }
     }
 
-    /// Every bundle ID that must stay visible for a given reveal state.
-    /// Used to build the assessment allowlist: revealing a section means its
-    /// bundles join the allowlist alongside the always-visible ones.
-    public func visibleBundleIDs(revealing revealed: Set<Section>) -> Set<String> {
-        var bundles = Set<String>()
-        for (item, section) in assignments where section != .visible {
-            guard revealed.contains(section), let bundle = item.bundleID else { continue }
-            bundles.insert(bundle)
-        }
-        return bundles
-    }
-
     /// Bundle-granularity conflict check against the currently observed items:
     /// a bundle can only be concealed if none of its items must remain visible.
     /// (`observedItems` matters because items absent from `assignments` are

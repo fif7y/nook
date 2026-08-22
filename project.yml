@@ -12,6 +12,14 @@ packages:
   Sparkle:
     url: https://github.com/sparkle-project/Sparkle
     from: 2.9.0
+schemes:
+  Nook:
+    build:
+      targets:
+        Nook: all
+    test:
+      targets:
+        - NookTests
 targets:
   Nook:
     type: application
@@ -48,5 +56,20 @@ targets:
         SWIFT_APPROACHABLE_CONCURRENCY: "YES"
         ENABLE_HARDENED_RUNTIME: "YES"
         ENABLE_APP_SANDBOX: "NO"
+        CODE_SIGN_STYLE: Automatic
+        DEVELOPMENT_TEAM: YW9UY68SQ7
+  NookTests:
+    type: bundle.unit-test
+    platform: macOS
+    sources:
+      - NookTests
+    dependencies:
+      - target: Nook
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: "YES"
+        SWIFT_VERSION: "6.0"
+        SWIFT_DEFAULT_ACTOR_ISOLATION: MainActor
+        SWIFT_APPROACHABLE_CONCURRENCY: "YES"
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: YW9UY68SQ7

@@ -161,6 +161,8 @@ public struct SettingsStore: Codable, Equatable, Sendable {
     public var separators: [SeparatorSpec] = []
 
     /// Behavior template + per-display overrides, keyed by display UUID string.
+    /// No UI writes the template yet — DisplaysPane edits only `displayOverrides`;
+    /// the template is the fallback `behavior(forDisplayUUID:)` returns.
     public var displayTemplate: DisplayBehavior = .collapse
     public var displayOverrides: [String: DisplayBehavior] = [:]
 

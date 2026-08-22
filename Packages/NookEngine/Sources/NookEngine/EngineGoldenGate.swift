@@ -122,13 +122,6 @@ public actor EngineGoldenGate: MenuBarEngine {
 
     // MARK: - MenuBarEngine
 
-    /// Always re-walks AX, bypassing the 0.5s cache — for callers about to
-    /// crop pixels against these frames, where a stale frame set shifts
-    /// every crop one slot over.
-    public func freshSnapshot() async -> EngineSnapshot {
-        await refreshSnapshot()
-    }
-
     public func snapshot() async -> EngineSnapshot {
         if let lastSnapshot, Date().timeIntervalSince(lastSnapshot.takenAt) < 0.5 {
             return lastSnapshot
@@ -319,7 +312,6 @@ public actor EngineGoldenGate: MenuBarEngine {
             lastSnapshot = EngineSnapshot(
                 items: after.items,
                 concealed: [],
-                nativeOverflowActive: after.nativeOverflowActive,
                 takenAt: after.takenAt
             )
             return
@@ -420,7 +412,6 @@ public actor EngineGoldenGate: MenuBarEngine {
         lastSnapshot = EngineSnapshot(
             items: after.items,
             concealed: plan.concealed,
-            nativeOverflowActive: after.nativeOverflowActive,
             takenAt: after.takenAt
         )
         if !concealable.isEmpty {
@@ -477,13 +468,9 @@ public actor EngineGoldenGate: MenuBarEngine {
     private func refreshSnapshot() async -> EngineSnapshot {
         let raw = await enumerator.snapshotItems()
         let previousIDs = lastSnapshot.map { Set($0.items.map(\.id)) }
-        // nativeOverflowVisible() is a SECOND full AX tree walk and nothing in
-        // the app reads the flag (only nook-probe, which calls the enumerator
-        // directly). Stapling it to every snapshot doubled all AX traffic.
         let snapshot = EngineSnapshot(
             items: raw.map { ObservedItem(id: $0.id, frame: $0.frame, appName: $0.appName) },
             concealed: lastSnapshot?.concealed ?? [],
-            nativeOverflowActive: false,
             takenAt: Date()
         )
         if let previousIDs, previousIDs != Set(raw.map(\.id)) {

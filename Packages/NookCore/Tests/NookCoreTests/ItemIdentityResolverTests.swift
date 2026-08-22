@@ -53,25 +53,6 @@ import Testing
         #expect(stale.isEmpty)
     }
 
-    @Test func aliasRemapsSingleLiveTwin() {
-        let remaps = ItemIdentityResolver.aliasRemaps(
-            storedIDs: [veljaOld, picker],
-            liveIDs: [veljaNew],
-            exemptBundles: exempt
-        )
-        #expect(remaps == [veljaOld: veljaNew])
-    }
-
-    @Test func aliasRemapSkipsMultiItemBundles() {
-        let second = ItemID(rawValue: "status:com.sindresorhus.Velja::Item-1")
-        let remaps = ItemIdentityResolver.aliasRemaps(
-            storedIDs: [veljaOld],
-            liveIDs: [veljaNew, second],
-            exemptBundles: exempt
-        )
-        #expect(remaps.isEmpty)
-    }
-
     @Test func concealedTwinsCollapseToAssignedWinner() {
         let losers = ItemIdentityResolver.concealedTwinLosers(
             concealedIDs: [veljaOld, veljaNew, picker, nookExtra],

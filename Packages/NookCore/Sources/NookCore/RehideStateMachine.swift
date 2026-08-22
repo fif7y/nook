@@ -14,7 +14,6 @@ public enum RevealReason: Hashable, Sendable {
     case doubleClick
     case hotkey
     case statusItem
-    case barPanel
     case settingsPreview
 }
 
@@ -22,7 +21,6 @@ public enum RehideTrigger: Hashable, Sendable {
     case delayExpired
     case clickedElsewhere
     case pointerLeftBand
-    case displayBehaviorChanged
 }
 
 public struct RehidePolicy: Equatable, Sendable {
@@ -200,8 +198,6 @@ public struct RehideStateMachine: Equatable, Sendable {
             return policy.autoRehide
         case .clickedElsewhere:
             return policy.rehideOnClickElsewhere
-        case .displayBehaviorChanged:
-            return true
         }
     }
 

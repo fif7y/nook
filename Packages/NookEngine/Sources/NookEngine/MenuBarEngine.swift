@@ -24,13 +24,11 @@ public struct EngineSnapshot: Equatable, Sendable {
     /// Items currently concealed by our assertion (kept from the last converge;
     /// AX can no longer see them).
     public let concealed: Set<ItemID>
-    public let nativeOverflowActive: Bool
     public let takenAt: Date
 
-    public init(items: [ObservedItem], concealed: Set<ItemID>, nativeOverflowActive: Bool, takenAt: Date) {
+    public init(items: [ObservedItem], concealed: Set<ItemID>, takenAt: Date) {
         self.items = items
         self.concealed = concealed
-        self.nativeOverflowActive = nativeOverflowActive
         self.takenAt = takenAt
     }
 }
