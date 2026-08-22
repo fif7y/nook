@@ -117,17 +117,23 @@ final class TransitionCoordinator {
         }
     }
 
+    private var precaptureTask: Task<Void, Never>?
+
     /// Once the bar has gone swap-quiet after a conceal and the ghost is off
     /// screen, the strip region shows exactly the "empty bar" the next reveal
     /// wants to freeze — capture it now so the reveal floats it instantly.
+    /// One in flight at a time: rapid conceal cycles otherwise stack
+    /// overlapping 3s polls, each ending in an SCK capture.
     private func scheduleRevealCoverPrecapture() {
         guard appState?.settings.revealAnimation != .smooth else { return }
-        Task { @MainActor in
+        precaptureTask?.cancel()
+        precaptureTask = Task { @MainActor in
             guard let appState else { return }
             await appState.waitUntilQuiesced(interval: 0.5, deadline: 3, poll: .milliseconds(200))
             // The ghost's fade must not bake into the snapshot.
             try? await Task.sleep(for: AppTiming.precaptureGhostClearance)
-            guard appState.currentRevealedSections.isEmpty, !ConcealGhostOverlay.stripActive
+            guard !Task.isCancelled,
+                  appState.currentRevealedSections.isEmpty, !ConcealGhostOverlay.stripActive
             else { return }
             revealCoverSnapshot = await ConcealGhostOverlay.snapshot(of: revealCoverRect)
         }

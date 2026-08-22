@@ -95,11 +95,14 @@ public actor EngineGoldenGate: MenuBarEngine {
         _ = await refreshSnapshot()
     }
 
+    /// TERMINAL: finishing the event stream is irreversible, so the engine is
+    /// single-use — one instance per app lifetime. `started` deliberately
+    /// stays true so a later `start()` is a no-op instead of running with a
+    /// dead stream.
     public func stop() async {
         prefsWatcher?.stop()
         prefsWatcher = nil
         invalidateAssertion()
-        started = false
         // Ends any `for await` over `events` instead of hanging it forever.
         eventContinuation.finish()
     }
@@ -528,6 +531,12 @@ public actor EngineGoldenGate: MenuBarEngine {
     }
 
     private func invalidateAssertion() {
+        if assertion != nil {
+            // Dropping an assertion reflows the bar exactly like a swap —
+            // stamp lastSwapAt so quiesced() goes false and overlay covers
+            // hold through the drop's animation instead of lifting mid-slide.
+            lastSwapAt = Date()
+        }
         assertion?.invalidate()
         assertion = nil
         activeAllowlist = nil

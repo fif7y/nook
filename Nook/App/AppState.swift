@@ -590,7 +590,15 @@ final class AppState {
     /// the boundary — an item dropped among/left of always-hidden members
     /// (only visible during a full reveal) adopts in, one dropped among the
     /// hidden cluster adopts out.
+    /// One adoption chain at a time — an externalOrderChange burst otherwise
+    /// spawns N concurrent retry chains, each pulling its own snapshot.
+    private var adoptionInFlight = false
+
     func adoptSectionsFromBar(retry: Int = 0) {
+        if retry == 0 {
+            guard !adoptionInFlight else { return }
+            adoptionInFlight = true
+        }
         Task {
             // Mid-transition bars give false frames — defer briefly. (Only
             // in-flight transitions block; a settled bar has stable frames.
@@ -598,12 +606,14 @@ final class AppState {
             if isTransitioning {
                 guard retry < AppTiming.adoptMaxDeferrals else {
                     NookLog.log("adopt: gave up after \(retry) deferrals")
+                    adoptionInFlight = false
                     return
                 }
                 try? await Task.sleep(for: AppTiming.adoptDeferralDelay)
                 adoptSectionsFromBar(retry: retry + 1)
                 return
             }
+            defer { adoptionInFlight = false }
             let snap = await engine.snapshot()
             updateSnapshot(snap)
             NookLog.log("adopt: pass (retry=\(retry), items=\(snap.items.count))")

@@ -21,7 +21,7 @@ public enum NookLog {
 
     /// One open handle for the process (per-line open/seek/close was three
     /// syscalls of pure overhead per line). Written only on `queue`.
-    private static let handle: FileHandle? = {
+    nonisolated(unsafe) private static var handle: FileHandle? = {
         rotateIfNeeded()
         if !FileManager.default.fileExists(atPath: url.path) {
             FileManager.default.createFile(atPath: url.path, contents: nil)
@@ -30,6 +30,22 @@ public enum NookLog {
         handle?.seekToEndOfFile()
         return handle
     }()
+
+    /// Mid-process rotation — the launch-time check alone never fires again
+    /// in a long-lived app. Checked every `rotateCheckInterval` writes, on
+    /// `queue` (which also owns the handle).
+    nonisolated(unsafe) private static var writesSinceRotateCheck = 0
+    private static let rotateCheckInterval = 2000
+
+    private static func rotateOnQueueIfNeeded() {
+        let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int ?? 0
+        guard size > rotateBytes else { return }
+        try? handle?.close()
+        rotateIfNeeded()
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        handle = try? FileHandle(forWritingTo: url)
+        handle?.seekToEndOfFile()
+    }
 
     private static func rotateIfNeeded() {
         let size = (try? FileManager.default.attributesOfItem(atPath: url.path))?[.size] as? Int ?? 0
@@ -54,6 +70,11 @@ public enum NookLog {
         let line = "\(stamp.string(from: Date())) \(String(clean))\n"
         queue.async {
             handle?.write(Data(line.utf8))
+            writesSinceRotateCheck += 1
+            if writesSinceRotateCheck >= rotateCheckInterval {
+                writesSinceRotateCheck = 0
+                rotateOnQueueIfNeeded()
+            }
         }
     }
 }
