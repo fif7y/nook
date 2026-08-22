@@ -2,22 +2,8 @@
 // Swift face of the MenuBarClientCore shim. The engine's hide/show primitive.
 
 import Foundation
+import NookCore
 import NookEngineObjC
-
-/// The 9 system items macOS 27's assessment configuration can individually
-/// allow (raw MBSystemItemIdentifier values). Anything not allowed is hidden
-/// while an assertion is active.
-public enum SystemItem: Int, CaseIterable, Sendable {
-    case battery = 0
-    case bluetooth = 1
-    case clock = 2
-    case displays = 3
-    case keyboard = 4
-    case volume = 5
-    case wifi = 6
-    case screenMirroring = 7
-    case primaryBentoBox = 8
-}
 
 /// One active hide state. Process-bound: dropping the instance (or the app
 /// crashing) restores the menu bar — macOS invalidates the assertion itself.

@@ -242,7 +242,7 @@ private struct ItemTile: View {
     }
 
     private var isSystemIcon: Bool {
-        EngineGoldenGate.systemItem(for: item.id) != nil
+        MenuBarPolicy.systemItem(for: item.id) != nil
     }
 
     /// Same-bundle siblings hide together (assertion granularity is per

@@ -1,20 +1,13 @@
 // SmokeTests.swift
-// First app-target tests: the pure ItemID predicates on AppState.
+// Harness smoke for the NookTests bundle — real app-layer tests land with the
+// EditorItemsBuilder/PlacementGeometry extractions.
 
 import Testing
 import NookCore
 @testable import Nook
 
 struct SmokeTests {
-    @Test func nookExtraIDMatchesOwnedExtrasNotChevron() {
-        #expect(AppState.isNookExtraID(ItemID(rawValue: "status:app.fif7y.Nook::Nook.Extra.media")))
-        #expect(!AppState.isNookExtraID(ItemID(rawValue: "status:app.fif7y.Nook::Nook.StatusItem")))
-        #expect(!AppState.isNookExtraID(ItemID(rawValue: "status:com.example.App::Item-0")))
-    }
-
-    @Test func unmanagedAppleBundleIsApplePrefixOnly() {
-        #expect(AppState.isUnmanagedAppleBundle("com.apple.Siri"))
-        #expect(!AppState.isUnmanagedAppleBundle("com.example.App"))
-        #expect(!AppState.isUnmanagedAppleBundle(nil))
+    @Test func appTargetLinksSharedPolicy() {
+        #expect(MenuBarPolicy.isNookExtraID(ItemID(rawValue: "status:app.fif7y.Nook::Nook.Extra.media")))
     }
 }

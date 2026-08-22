@@ -290,7 +290,7 @@ final class MenuBarBandMonitor {
         // empty space. The agent's own window/group backdrop counts too.
         let empty = !itemRoles.contains(role)
             && (role == "AXMenuBar"
-                || owner == ItemEnumeratorBundle.agent
+                || owner == NookBundle.agentID
                 || role == "AXWindow" || role == "AXGroup")
         NookLog.log("band: hit-test role=\(role) owner=\(owner) → empty=\(empty)")
         return empty

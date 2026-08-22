@@ -264,7 +264,7 @@ final class AppState {
         var count = 0
         for item in snap.items {
             guard let frame = item.frame,
-                  frame.minY > -5, frame.minY < 50,
+                  MenuBarGeometry.isInBand(frame),
                   settings.sectionModel.section(of: item.id) != .visible
             else { continue }
             count += 1
@@ -466,7 +466,7 @@ final class AppState {
         let snap = await engine.snapshot()
         var union: CGRect?
         for item in snap.items {
-            guard let frame = item.frame, frame.minY > -5, frame.minY < 50 else { continue }
+            guard let frame = item.frame, MenuBarGeometry.isInBand(frame) else { continue }
             union = union.map { $0.union(frame) } ?? frame
         }
         return union
@@ -564,7 +564,7 @@ final class AppState {
             snap = await engine.snapshot()
             snapshot = snap
         }
-        let nookBundle = Bundle.main.bundleIdentifier ?? "app.fif7y.Nook"
+        let nookBundle = Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
         guard
             let item = snap.items.first(where: { $0.id == id }),
             let frame = item.frame
@@ -578,7 +578,7 @@ final class AppState {
         // and the final side clamp need the chevron.
         let rawChevronFrame = snap.items.first(where: {
             $0.id.bundleID == nookBundle
-                && !Self.isNookExtraID($0.id)
+                && !MenuBarPolicy.isNookExtraID($0.id)
                 && !$0.id.rawValue.contains("Separator")
         })?.frame
 
@@ -616,7 +616,7 @@ final class AppState {
         // coordinate origin), and one foreign neighbor frame aimed a drop at
         // x=268 on a status area that starts around x=1050.
         func inBand(_ f: CGRect) -> Bool {
-            f.minY > -5 && f.minY < 50
+            MenuBarGeometry.isInBand(f)
                 && abs(f.midY - frame.midY) < 30
                 && f.midX > 0 && f.midX < screen.frame.maxX
         }
@@ -645,7 +645,7 @@ final class AppState {
                 return false
             }
             let managedMinX = snap.items
-                .filter { !Self.isUnmanagedAppleBundle($0.id.bundleID) && !$0.id.isSystemModule }
+                .filter { !MenuBarPolicy.isUnmanagedAppleBundle($0.id.bundleID) && !$0.id.isSystemModule }
                 .compactMap(\.frame?.minX)
                 .min() ?? chevronFrame.minX
             switch section {
@@ -682,7 +682,7 @@ final class AppState {
         // The drag must start inside the main display's menu bar band — a
         // stale or foreign-display frame here would post a ⌘-click into
         // whatever sits at that point on screen.
-        guard frame.minY > -5, frame.minY < 50,
+        guard MenuBarGeometry.isInBand(frame),
               frame.midX > 0, frame.midX < screen.frame.maxX else {
             NookLog.log("place: source frame outside menu bar band (\(frame)) — skipping drag")
             return false
@@ -844,7 +844,7 @@ final class AppState {
         for id in stored where byID[id] == nil {
             guard let bundle = id.bundleID,
                   bundle != Bundle.main.bundleIdentifier,
-                  !Self.isUnmanagedAppleBundle(bundle),
+                  !MenuBarPolicy.isUnmanagedAppleBundle(bundle),
                   let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundle).first
             else { continue }
             byID[id] = ObservedItem(id: id, frame: nil, appName: app.localizedName)
@@ -861,7 +861,9 @@ final class AppState {
         // the alias until the item is next observed live, so collapse here.
         let concealedTwinLoser = ItemIdentityResolver.concealedTwinLosers(
             concealedIDs: byID.values.filter { $0.frame == nil }.map(\.id),
-            exemptBundles: EngineGoldenGate.identityExemptBundles,
+            exemptBundles: MenuBarPolicy.identityExemptBundles(
+                nookBundleID: Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
+            ),
             isAssigned: { settings.sectionModel.assignments[$0.sectionKey] != nil }
         )
         let all = byID.values.filter { item in
@@ -875,12 +877,12 @@ final class AppState {
                   settings.sectionModel.section(of: item.id) == section
             else { return false }
             if item.id.bundleID == Bundle.main.bundleIdentifier {
-                return Self.isNookExtraID(item.id)
+                return MenuBarPolicy.isNookExtraID(item.id)
             }
-            if Self.isUnmanagedAppleBundle(item.id.bundleID) {
+            if MenuBarPolicy.isUnmanagedAppleBundle(item.id.bundleID) {
                 // Core system icons the assertion can individually control
                 // (Sound, battery, Wi-Fi…) are manageable; the rest stay out.
-                return EngineGoldenGate.systemItem(for: item.id) != nil
+                return MenuBarPolicy.systemItem(for: item.id) != nil
             }
             return true
         }
@@ -914,27 +916,6 @@ final class AppState {
     }
 
     // MARK: - Effects
-
-    /// True for Nook-owned proxy/extra items (NOT the chevron): they're
-    /// section-manageable through their own visibility. Separators included —
-    /// they live in sections and hide with them, extras-style.
-    static func isNookExtraID(_ id: ItemID) -> Bool {
-        let raw = id.rawValue
-        return raw.contains("::Nook.")
-            && !raw.contains("Nook.StatusItem")
-    }
-
-    /// Apple bundle that is NOT manageable as a third-party item — only the
-    /// menuextra → SystemItem allowlist can touch it (or nothing can).
-    /// SystemUIServer's Siri icon deliberately stays out of scope: the
-    /// assertion CAN hide it (bundle-allowlist governed, verified live
-    /// 2026-08-21), but the agent hard-pins its position — plist slots and
-    /// synthetic ⌘-drags are both ignored — and an editor tile that ignores
-    /// placement breaks the editor's promise. macOS's own Siri setting
-    /// already covers show/hide.
-    static func isUnmanagedAppleBundle(_ bundle: String?) -> Bool {
-        bundle?.hasPrefix("com.apple.") == true
-    }
 
     /// Nook-owned items hide by their OWN visibility, not the assertion —
     /// asserting away Nook's bundle would take the chevron too.
@@ -1153,10 +1134,10 @@ final class AppState {
     /// model-visible newcomer flaps sides of the chevron on every reveal.
     @discardableResult
     private func registerNewItems(from snap: EngineSnapshot) -> [ItemID] {
-        let nookBundle = Bundle.main.bundleIdentifier ?? "app.fif7y.Nook"
+        let nookBundle = Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
         let candidates = snap.items.map(\.id).filter {
             guard let bundle = $0.bundleID else { return false }
-            return bundle != nookBundle && !Self.isUnmanagedAppleBundle(bundle)
+            return bundle != nookBundle && !MenuBarPolicy.isUnmanagedAppleBundle(bundle)
         }
         var model = settings.sectionModel
         let before = model.knownBundles
@@ -1180,11 +1161,11 @@ final class AppState {
         // adoptSectionsFromBar defers while transitioning/settling; this is
         // the last line of defense if called on a stale path.
         guard !isTransitioning else { return }
-        let nookBundle = Bundle.main.bundleIdentifier ?? "app.fif7y.Nook"
+        let nookBundle = Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
         guard
             let chevron = snap.items.first(where: {
                 $0.id.bundleID == nookBundle
-                    && !Self.isNookExtraID($0.id)
+                    && !MenuBarPolicy.isNookExtraID($0.id)
                     && !$0.id.rawValue.contains("Separator")
             }),
             let chevronX = chevron.frame?.minX
@@ -1205,8 +1186,8 @@ final class AppState {
         }
         for item in snap.items {
             guard let bundle = item.id.bundleID,
-                  bundle != nookBundle || Self.isNookExtraID(item.id),
-                  !Self.isUnmanagedAppleBundle(bundle),
+                  bundle != nookBundle || MenuBarPolicy.isNookExtraID(item.id),
+                  !MenuBarPolicy.isUnmanagedAppleBundle(bundle),
                   let frame = item.frame
             else { continue }
             let current = model.section(of: item.id)
@@ -1274,8 +1255,8 @@ final class AppState {
                 $0.frame != nil && !known.contains($0.id.sectionKey)
                     && model.section(of: $0.id) == section
                     && !$0.id.isSystemModule
-                    && !Self.isUnmanagedAppleBundle($0.id.bundleID)
-                    && ($0.id.bundleID != nookBundle || Self.isNookExtraID($0.id))
+                    && !MenuBarPolicy.isUnmanagedAppleBundle($0.id.bundleID)
+                    && ($0.id.bundleID != nookBundle || MenuBarPolicy.isNookExtraID($0.id))
             }
             for item in missing.sorted(by: { liveX[$0.id.sectionKey]! < liveX[$1.id.sectionKey]! }) {
                 let key = item.id.sectionKey

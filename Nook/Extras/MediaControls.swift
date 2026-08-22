@@ -62,7 +62,10 @@ final class ExtrasManager {
     }
 
     static func itemID(for spec: ExtraItemSpec) -> ItemID {
-        ItemID(rawValue: "status:\(Bundle.main.bundleIdentifier ?? "app.fif7y.Nook")::\(spec.itemTitle)")
+        .status(
+            bundle: Bundle.main.bundleIdentifier ?? NookBundle.fallbackID,
+            title: spec.itemTitle
+        )
     }
 
     /// All ItemIDs the editor should represent even when invisible.

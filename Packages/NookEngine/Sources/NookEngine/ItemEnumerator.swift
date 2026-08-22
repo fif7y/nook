@@ -19,7 +19,7 @@ public struct RawItem: Equatable, Sendable {
 /// taken on a background executor with short messaging timeouts.
 public actor ItemEnumerator {
     public init() {}
-    static let agentBundleID = "com.apple.MenuBarAgent"
+    static let agentBundleID = NookBundle.agentID
 
     private var agentElement: AXUIElement?
     private var agentPID: pid_t = 0
@@ -59,7 +59,7 @@ public actor ItemEnumerator {
     }
 
     private func isMainDisplayFrame(_ frame: CGRect) -> Bool {
-        frame.minY > -5 && frame.minY < 50
+        MenuBarGeometry.isInBand(frame)
     }
 
     // MARK: - Internals
@@ -74,7 +74,7 @@ public actor ItemEnumerator {
         }) else { return nil }
         let element = AXUIElementCreateApplication(agent.processIdentifier)
         // A stuck app must never wedge a snapshot.
-        AXUIElementSetMessagingTimeout(element, 0.25)
+        AXUIElementSetMessagingTimeout(element, EngineTiming.axAgentTimeout)
         agentElement = element
         agentPID = agent.processIdentifier
         return element
@@ -93,7 +93,7 @@ public actor ItemEnumerator {
                 guard let bundleID else { return nil }
                 let title = statusItemTitle(in: child) ?? "Item-0"
                 return RawItem(
-                    id: ItemID(rawValue: "status:\(bundleID)::\(title)"),
+                    id: .status(bundle: bundleID, title: title),
                     frame: frame,
                     appName: appName
                 )
@@ -104,7 +104,7 @@ public actor ItemEnumerator {
                         continue
                     }
                     return RawItem(
-                        id: ItemID(rawValue: "status:\(Self.agentBundleID)::\(identifier)"),
+                        id: .status(bundle: Self.agentBundleID, title: identifier),
                         frame: frame,
                         appName: nil
                     )
@@ -127,7 +127,7 @@ public actor ItemEnumerator {
                 ]
                 let title = candidates.compactMap { $0?.isEmpty == false ? $0 : nil }.first ?? "Item-0"
                 return RawItem(
-                    id: ItemID(rawValue: "status:\(bundleID)::\(title)"),
+                    id: .status(bundle: bundleID, title: title),
                     frame: frame,
                     appName: app.localizedName
                 )

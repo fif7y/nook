@@ -78,7 +78,7 @@ struct ConvergePlan: Equatable {
         // definition never "revealed" — it's always on screen).
         let hiddenSystem = Set(model.assignments.compactMap { id, section -> SystemItem? in
             guard section != .visible, !revealedSections.contains(section) else { return nil }
-            return EngineGoldenGate.systemItem(for: id)
+            return MenuBarPolicy.systemItem(for: id)
         })
         let allowedSystem = SystemItem.allCases.filter { !hiddenSystem.contains($0) }
 
@@ -101,7 +101,7 @@ struct ConvergePlan: Equatable {
         }
 
         let concealed = Set(observedIDs.filter { id in
-            if let system = EngineGoldenGate.systemItem(for: id) {
+            if let system = MenuBarPolicy.systemItem(for: id) {
                 return hiddenSystem.contains(system)
             }
             guard let bundle = id.bundleID else { return false }

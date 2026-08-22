@@ -36,7 +36,7 @@ enum ItemImageCache {
             return NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         }
         if let bundleID = item.bundleID {
-            if bundleID == ItemEnumeratorBundle.agent {
+            if bundleID == NookBundle.agentID {
                 return systemSymbol(for: item)
             }
             if let cached = appIcons[bundleID] {
@@ -68,8 +68,4 @@ enum ItemImageCache {
         else { symbol = "circle.dashed" }
         return NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
     }
-}
-
-enum ItemEnumeratorBundle {
-    static let agent = "com.apple.MenuBarAgent"
 }

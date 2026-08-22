@@ -53,28 +53,12 @@ public actor EngineGoldenGate: MenuBarEngine {
     private var activeConcealable: Set<String>?
     private var activeSystemAllow: Set<Int>?
 
-    /// Core system items ARE controllable via the assertion's system-item
-    /// allowlist — map their menuextra identifiers to MBSystemItemIdentifier.
-    public static func systemItem(for id: ItemID) -> SystemItem? {
-        let raw = id.rawValue
-        guard raw.contains("::com.apple.menuextra.") else { return nil }
-        if raw.hasSuffix(".sound") { return .volume }
-        if raw.hasSuffix(".battery") { return .battery }
-        if raw.hasSuffix(".wifi") { return .wifi }
-        if raw.hasSuffix(".clock") { return .clock }
-        if raw.hasSuffix(".bluetooth") { return .bluetooth }
-        if raw.hasSuffix(".display") || raw.hasSuffix(".displays") { return .displays }
-        if raw.hasSuffix(".textinput") || raw.hasSuffix(".keyboard") { return .keyboard }
-        if raw.hasSuffix(".screen-mirroring") { return .screenMirroring }
-        return nil
-    }
-    /// Bundles whose items legitimately mix live and hidden — never subject
-    /// to tag-drift pruning (Nook's own items; the agent's per-identifier
-    /// system items).
-    public static let identityExemptBundles: Set<String> = [
-        Bundle.main.bundleIdentifier ?? "app.fif7y.Nook",
-        ItemEnumerator.agentBundleID,
-    ]
+    /// MenuBarPolicy.identityExemptBundles bound to the running app's bundle
+    /// id, computed once.
+    public static let identityExemptBundles: Set<String> =
+        MenuBarPolicy.identityExemptBundles(
+            nookBundleID: Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
+        )
 
     private var lastSnapshot: EngineSnapshot?
     private var started = false
@@ -90,7 +74,7 @@ public actor EngineGoldenGate: MenuBarEngine {
     /// always contains system items, so empty means the agent tree isn't
     /// readable yet (launch, locked screen) — planning from it swaps in an
     /// allow-all assertion that un-hides everything for a beat.
-    private var emptyAXRetriesRemaining = 6
+    private var emptyAXRetriesRemaining = EngineTiming.emptyAXRetries
 
     public init() {
         var continuation: AsyncStream<EngineEvent>.Continuation!
@@ -123,7 +107,7 @@ public actor EngineGoldenGate: MenuBarEngine {
     // MARK: - MenuBarEngine
 
     public func snapshot() async -> EngineSnapshot {
-        if let lastSnapshot, Date().timeIntervalSince(lastSnapshot.takenAt) < 0.5 {
+        if let lastSnapshot, Date().timeIntervalSince(lastSnapshot.takenAt) < EngineTiming.snapshotTTL {
             return lastSnapshot
         }
         return await refreshSnapshot()
@@ -193,7 +177,7 @@ public actor EngineGoldenGate: MenuBarEngine {
         let written = AgentPositionStore.writeOrder(orderedTags)
         AgentPositionStore.restartAgent()
         // The agent takes a moment to come back; settle before re-observing.
-        try? await Task.sleep(for: .seconds(1.5))
+        try? await Task.sleep(for: .seconds(EngineTiming.agentRestartSettle))
         _ = await refreshSnapshot()
         // A freshly-booted agent lays live items back out where they sat — it
         // re-slots from the plist only when an item (re)enters layout. While
@@ -207,9 +191,9 @@ public actor EngineGoldenGate: MenuBarEngine {
             await conceal()
             // Let the hide swap actually land before re-revealing — swaps can
             // land after the transaction returns (settle≠swap).
-            let pulseDeadline = Date().addingTimeInterval(1.5)
-            while Date() < pulseDeadline, !quiesced(for: 0.3) {
-                try? await Task.sleep(for: .milliseconds(100))
+            let pulseDeadline = Date().addingTimeInterval(EngineTiming.reSlotPulseDeadline)
+            while Date() < pulseDeadline, !quiesced(for: EngineTiming.reSlotPulseQuiesce) {
+                try? await Task.sleep(for: EngineTiming.reSlotPulsePoll)
             }
             await reveal(sections)
         }
@@ -223,7 +207,7 @@ public actor EngineGoldenGate: MenuBarEngine {
         guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID).first
         else { return false }
         let appElement = AXUIElementCreateApplication(app.processIdentifier)
-        AXUIElementSetMessagingTimeout(appElement, 0.5)
+        AXUIElementSetMessagingTimeout(appElement, EngineTiming.axAppTimeout)
         var extras: CFTypeRef?
         AXUIElementCopyAttributeValue(appElement, "AXExtrasMenuBar" as CFString, &extras)
         guard let extrasBar = extras, CFGetTypeID(extrasBar) == AXUIElementGetTypeID() else {
@@ -262,13 +246,13 @@ public actor EngineGoldenGate: MenuBarEngine {
             if emptyAXRetriesRemaining > 0 {
                 emptyAXRetriesRemaining -= 1
                 Task {
-                    try? await Task.sleep(for: .milliseconds(500))
+                    try? await Task.sleep(for: EngineTiming.emptyAXRetryDelay)
                     await self.converge()
                 }
             }
             return
         }
-        emptyAXRetriesRemaining = 6
+        emptyAXRetriesRemaining = EngineTiming.emptyAXRetries
         // Running-app set: consulted by the stale prune below (quit apps) and
         // the allowlist build. Fetched once, up front.
         let runningBundles = await MainActor.run {
@@ -326,7 +310,7 @@ public actor EngineGoldenGate: MenuBarEngine {
         // the wedge is permanent. Only trust the signal once the post-swap
         // settle window (verify covers 3s) has passed, or the normal AX
         // drop-out latency right after a swap would read as a violation.
-        let assertionLost = Date().timeIntervalSince(lastSwapAt) > 3
+        let assertionLost = Date().timeIntervalSince(lastSwapAt) > EngineTiming.teardownSettleWindow
             && snapshot.items.contains { item in
                 guard let bundle = item.id.bundleID else { return false }
                 return concealable.contains(bundle)
@@ -378,13 +362,13 @@ public actor EngineGoldenGate: MenuBarEngine {
         activeSystemAllow = Set(allowedSystem.map(\.rawValue))
         lastSwapAt = Date()
         var activated = false
-        let deadline = Date().addingTimeInterval(3)
+        let deadline = Date().addingTimeInterval(EngineTiming.activationDeadline)
         while Date() < deadline {
             if let result = activationBox.result {
                 activated = result
                 break
             }
-            try? await Task.sleep(for: .milliseconds(50))
+            try? await Task.sleep(for: EngineTiming.activationPoll)
         }
         // Swap order matters: activate the new state, then drop the old
         // assertion so there is no flash of everything-visible in between.
@@ -423,9 +407,9 @@ public actor EngineGoldenGate: MenuBarEngine {
     /// bundles drop out of the AX tree. Bails silently when a newer converge
     /// has superseded this one — that converge owns the state now.
     private func verifyConcealment(of concealable: Set<String>) async {
-        let deadline = Date().addingTimeInterval(3)
+        let deadline = Date().addingTimeInterval(EngineTiming.verifyWindow)
         while Date() < deadline {
-            try? await Task.sleep(for: .milliseconds(150))
+            try? await Task.sleep(for: EngineTiming.verifyPoll)
             guard activeConcealable == concealable else { return }
             let check = await refreshSnapshot()
             let stillVisible = check.items.contains { item in

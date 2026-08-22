@@ -24,7 +24,10 @@ final class SeparatorManager {
     }
 
     static func itemID(for spec: SeparatorSpec) -> ItemID {
-        ItemID(rawValue: "status:\(Bundle.main.bundleIdentifier ?? "app.fif7y.Nook")::Nook.Separator.\(spec.id.uuidString)")
+        .status(
+            bundle: Bundle.main.bundleIdentifier ?? NookBundle.fallbackID,
+            title: "Nook.Separator.\(spec.id.uuidString)"
+        )
     }
 
     func sync(with specs: [SeparatorSpec]) {

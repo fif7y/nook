@@ -33,7 +33,7 @@ enum AgentPositionStore {
             // value so whichever tag survives the restart lands on this slot.
             let id = ItemID(rawValue: tag)
             if id.sectionKey != id, let bundle = id.bundleID {
-                let prefix = "status:\(bundle)::"
+                let prefix = ItemID.statusTagPrefix(bundle: bundle)
                 for key in positions.keys where key.hasPrefix(prefix) && key != tag {
                     positions[key] = value
                 }
@@ -56,7 +56,7 @@ enum AgentPositionStore {
     /// explicit, user-initiated converge.
     static func restartAgent() {
         let running = NSRunningApplication.runningApplications(
-            withBundleIdentifier: "com.apple.MenuBarAgent"
+            withBundleIdentifier: NookBundle.agentID
         )
         for app in running {
             kill(app.processIdentifier, SIGKILL)
