@@ -11,6 +11,7 @@ final class AgentPrefsWatcher: @unchecked Sendable {
     private var descriptor: CInt = -1
     private let queue = DispatchQueue(label: "nook.agent-prefs-watcher")
     private var debounceWork: DispatchWorkItem?
+    private var retryWork: DispatchWorkItem?
     private var suppressUntil: Date = .distantPast
     private let onChange: @Sendable () -> Void
 
@@ -38,7 +39,19 @@ final class AgentPrefsWatcher: @unchecked Sendable {
     private func openSource() {
         closeSource()
         descriptor = open(plistURL.path, O_EVTONLY)
-        guard descriptor >= 0 else { return }
+        guard descriptor >= 0 else {
+            // The plist can be momentarily absent (cfprefsd's atomic replace
+            // mid-reopen, or a fresh account before the agent's first write).
+            // A silent bail here killed external-order adoption for the whole
+            // session — keep retrying quietly instead.
+            NookLog.log("prefsWatcher: plist unavailable — retrying in 5s")
+            let work = DispatchWorkItem { [weak self] in self?.openSource() }
+            retryWork = work
+            queue.asyncAfter(deadline: .now() + 5, execute: work)
+            return
+        }
+        retryWork?.cancel()
+        retryWork = nil
         let source = DispatchSource.makeFileSystemObjectSource(
             fileDescriptor: descriptor,
             eventMask: [.write, .delete, .rename],
@@ -61,6 +74,8 @@ final class AgentPrefsWatcher: @unchecked Sendable {
     }
 
     private func closeSource() {
+        retryWork?.cancel()
+        retryWork = nil
         source?.cancel()
         source = nil
         descriptor = -1
