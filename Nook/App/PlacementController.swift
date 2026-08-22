@@ -75,9 +75,17 @@ final class PlacementController {
             NookLog.log("place: placing \(flushed.count) queued newcomer(s)")
             for id in flushed {
                 guard let appState else { return }
-                let placed = await physicallyPlace(
-                    id, in: appState.settings.sectionModel.section(of: id)
-                )
+                let section = appState.settings.sectionModel.section(of: id)
+                // itemsChanged fires this flush mid-conceal too (a rescue's
+                // restore is itself an itemsChanged) — placing a concealed
+                // section's item there measures fading frames. Hold until
+                // ITS section is actually revealed.
+                guard section == .visible
+                    || appState.revealedSectionsForExtras.contains(section) else {
+                    pendingPlacements.insert(id)
+                    continue
+                }
+                let placed = await physicallyPlace(id, in: section)
                 if placed {
                     // A verified reveal-time placement ends any rescue
                     // ping-pong — the item is truly in its slot.
