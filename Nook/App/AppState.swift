@@ -38,6 +38,7 @@ final class AppState {
     }
 
     @ObservationIgnored private lazy var placement = PlacementController(appState: self, engine: engine)
+    @ObservationIgnored private lazy var transitions = TransitionCoordinator(appState: self, engine: engine)
     private var rehide = RehideStateMachine()
     private var rehideTimer: Timer?
     private var statusItem: NookStatusItem?
@@ -49,7 +50,53 @@ final class AppState {
 
     // MARK: - Lifecycle
 
+    /// Boot sequence. ORDER IS LOAD-BEARING:
+    /// migrations → policy/updater → onboarding gate → bar items (separators
+    /// before extras; extras sync reads the media-controls migration) →
+    /// monitors → event pump → async engine boot. Inside the engine boot:
+    /// `waitForOwnItemAdoption` runs BEFORE `engine.start` (items registering
+    /// under an active assertion park offscreen), `registerNewItems` before
+    /// `setModel` (routing must precede the first converge),
+    /// `flushPendingPlacements` after `setModel`, and the launch conceal
+    /// precedes the display-policy reveal so the policy lands on a settled bar.
     func start() {
+        wireTransitionSettleCallbacks()
+        runOneShotMigrations()
+        applyPolicyAndStartUpdater()
+        presentOnboardingIfNeeded()
+        buildBarItems()
+        startMonitors()
+        startEngineEventPump()
+        bootEngine()
+    }
+
+    private func wireTransitionSettleCallbacks() {
+        transitions.onRevealSettled = { [weak self] in
+            guard let self else { return }
+            dispatch(rehide.handle(.transitionSettled))
+            settleCatchUp()
+            // Newcomers routed into a then-concealed section finally
+            // have measurable neighbors — walk them to their slot.
+            placement.flushPendingPlacements()
+            // Swipe-through hover: the pointer can be long gone by the
+            // time the reveal settles — armIfNeeded gave the FULL delay.
+            // Re-arm as a pointer-out so an accidental hover self-heals
+            // on the short clock. HOVER ONLY: deliberate reveals (click,
+            // hotkey) with the pointer elsewhere must keep the floor,
+            // not conceal instantly at rehideDelay 0.
+            if case .revealed(_, .hover) = rehide.state,
+               bandMonitor?.pointerCurrentlyInBand == false {
+                pointerLeftBand()
+            }
+        }
+        transitions.onConcealSettled = { [weak self] in
+            guard let self else { return }
+            dispatch(rehide.handle(.transitionSettled))
+            settleCatchUp()
+        }
+    }
+
+    private func runOneShotMigrations() {
         // One-shot: snappier hover default (0.2 → 0.1) for stores saved
         // before the default changed.
         if !UserDefaults.standard.bool(forKey: "nook.migratedHoverDelay01"),
@@ -63,16 +110,22 @@ final class AppState {
         // title-variant twin entries left by older builds.
         settings.sectionModel.canonicalize()
         settings.save()
+    }
 
+    private func applyPolicyAndStartUpdater() {
         rehide.policy = settings.rehidePolicy
         engineCanHide = engine.capabilities.canHide
         NookLog.log("start: axTrusted=\(AXIsProcessTrusted()) canHide=\(engineCanHide) assignments=\(settings.sectionModel.assignments.count)")
         SparkleController.shared.start()
+    }
 
+    private func presentOnboardingIfNeeded() {
         if !accessibilityGranted || !settings.onboardingCompleted {
             OnboardingController.shared.present(appState: self)
         }
+    }
 
+    private func buildBarItems() {
         if settings.showStatusItem {
             statusItem = NookStatusItem(appState: self)
         }
@@ -87,7 +140,9 @@ final class AppState {
         }
         extras = ExtrasManager(appState: self)
         extras?.sync(with: settings.extraItems)
+    }
 
+    private func startMonitors() {
         let bandMonitor = MenuBarBandMonitor(appState: self)
         bandMonitor.start()
         self.bandMonitor = bandMonitor
@@ -98,14 +153,18 @@ final class AppState {
         hotkey.register(settings.hotkey)
         registeredHotkey = settings.hotkey
         self.hotkey = hotkey
+    }
 
+    private func startEngineEventPump() {
         eventTask = Task { [weak self] in
             guard let events = self?.engine.events else { return }
             for await event in events {
                 self?.handle(engineEvent: event)
             }
         }
+    }
 
+    private func bootEngine() {
         Task {
             // The agent DEFERS adopting newly registered status items while
             // an assessment assertion is active (verified live 2026-08-21: a
@@ -211,44 +270,6 @@ final class AppState {
         }
     }
 
-    /// Union of the on-screen frames about to conceal (main-display band
-    /// only): everything assigned to a non-visible section that currently has
-    /// a frame. Nil when nothing concealable is showing. Re-snapshots: AX
-    /// lists freshly revealed items progressively, and the settle-time
-    /// snapshot can be missing half the strip.
-    /// Where the concealed strip last sat — icons reappear in the same spot,
-    /// so this rect is the reveal cover's footprint (Instant/Fade styles).
-    private var lastConcealedStripRect: CGRect?
-
-    /// Empty-strip snapshot pre-captured while the bar idles concealed — the
-    /// reveal path floats it synchronously instead of paying ~100ms+ of SCK
-    /// capture before the swap can even start (snappiness).
-    private var revealCoverSnapshot: ConcealGhostOverlay.BarSnapshot?
-
-    /// The reveal cover's footprint: the remembered strip, padded generously —
-    /// left is the slide origin (empty bar, free to cover), right catches the
-    /// visible cluster shifting. Strip width drifts between conceals.
-    private var revealCoverRect: CGRect? {
-        lastConcealedStripRect.map {
-            CGRect(x: $0.minX - 120, y: $0.minY, width: $0.width + 180, height: $0.height)
-        }
-    }
-
-    /// Once the bar has gone swap-quiet after a conceal and the ghost is off
-    /// screen, the strip region shows exactly the "empty bar" the next reveal
-    /// wants to freeze — capture it now so the reveal floats it instantly.
-    private func scheduleRevealCoverPrecapture() {
-        guard settings.revealAnimation != .smooth else { return }
-        Task { @MainActor in
-            await waitUntilQuiesced(interval: 0.5, deadline: 3, poll: .milliseconds(200))
-            // The ghost's fade must not bake into the snapshot.
-            try? await Task.sleep(for: .milliseconds(300))
-            guard currentRevealedSections.isEmpty, !ConcealGhostOverlay.stripActive
-            else { return }
-            revealCoverSnapshot = await ConcealGhostOverlay.snapshot(of: revealCoverRect)
-        }
-    }
-
     /// Bounded poll until the engine reports swap-quiet for `interval` — the
     /// agent animates each swap, so quiet means the bar has stopped moving.
     func waitUntilQuiesced(
@@ -258,22 +279,6 @@ final class AppState {
         while Date() < by, await !engine.quiesced(for: interval) {
             try? await Task.sleep(for: poll)
         }
-    }
-
-    private func concealStripFrames() async -> CGRect? {
-        let snap = await engine.snapshot()
-        var union: CGRect?
-        var count = 0
-        for item in snap.items {
-            guard let frame = item.frame,
-                  MenuBarGeometry.isInBand(frame),
-                  settings.sectionModel.section(of: item.id) != .visible
-            else { continue }
-            count += 1
-            union = union.map { $0.union(frame) } ?? frame
-        }
-        NookLog.log("strip: \(count) items → \(union.map { "\(Int($0.minX))..\(Int($0.maxX))" } ?? "nil")")
-        return union
     }
 
     /// Post-settle catch-up: re-run the companion apply so anything that
@@ -519,7 +524,7 @@ final class AppState {
         }
     }
 
-    private var currentRevealedSections: Set<NookCore.Section> {
+    var currentRevealedSections: Set<NookCore.Section> {
         switch rehide.state {
         case .revealed(let sections, _):
             return sections
@@ -544,90 +549,9 @@ final class AppState {
             case .none:
                 break
             case .reveal(let sections):
-                Task {
-                    // Instant/Fade styles: the agent's slide-in is the only
-                    // reveal animation the OS offers — a snapshot of the
-                    // still-empty strip covers the slide, then pops (Instant)
-                    // or fades (Fade) away once the swap lands. The strip rect
-                    // is remembered from the last conceal (icons reappear
-                    // where they left); no memory yet → the slide shows.
-                    var cover: ConcealGhostOverlay?
-                    if settings.revealAnimation != .smooth {
-                        // Pre-captured snapshot floats synchronously; only
-                        // fall back to a live capture when none is cached.
-                        // 15-min freshness cap: an appearance/wallpaper change
-                        // while idle would flash a stale background.
-                        if let snap = revealCoverSnapshot,
-                           Date().timeIntervalSince(snap.takenAt) < AppTiming.revealCoverFreshness {
-                            cover = ConcealGhostOverlay.begin(from: snap, safety: AppTiming.transitionCoverSafety)
-                        } else {
-                            cover = await ConcealGhostOverlay.begin(
-                                over: revealCoverRect, safety: AppTiming.transitionCoverSafety
-                            )
-                        }
-                        revealCoverSnapshot = nil
-                    }
-                    NookLog.log("effect reveal \(sections) → engine (anim=\(settings.revealAnimation.rawValue), cover=\(cover != nil))")
-                    await engine.reveal(sections)
-                    snapshot = await engine.snapshot()
-                    if let cover {
-                        // Hold until the engine is swap-quiet: under rapid
-                        // hover cycles the real swap can land AFTER the settle
-                        // report (epoch-guard race), and the agent animates
-                        // each swap — a timed grace popped the cover mid-slide.
-                        let fade = settings.revealAnimation == .fade
-                        Task { @MainActor in
-                            await waitUntilQuiesced(interval: 0.15, deadline: 2, poll: .milliseconds(30))
-                            if fade { cover.fadeOut() } else { cover.dismiss() }
-                        }
-                    }
-                    NookLog.log("effect reveal settled")
-                    dispatch(rehide.handle(.transitionSettled))
-                    settleCatchUp()
-                    // Newcomers routed into a then-concealed section finally
-                    // have measurable neighbors — walk them to their slot.
-                    placement.flushPendingPlacements()
-                    // Swipe-through hover: the pointer can be long gone by the
-                    // time the reveal settles — armIfNeeded gave the FULL delay.
-                    // Re-arm as a pointer-out so an accidental hover self-heals
-                    // on the short clock. HOVER ONLY: deliberate reveals (click,
-                    // hotkey) with the pointer elsewhere must keep the floor,
-                    // not conceal instantly at rehideDelay 0.
-                    if case .revealed(_, .hover) = rehide.state,
-                       bandMonitor?.pointerCurrentlyInBand == false {
-                        pointerLeftBand()
-                    }
-                }
+                transitions.performReveal(sections)
             case .conceal:
-                Task {
-                    // Cover the strip BEFORE the swap: the agent pops
-                    // concealed items with no animation, so the overlay is
-                    // the hide animation. Fades once the swap has landed.
-                    // Instant style skips the cover — the pop IS the look.
-                    let strip = await concealStripFrames()
-                    lastConcealedStripRect = strip
-                    let ghost = settings.revealAnimation == .instant
-                        ? nil
-                        : await ConcealGhostOverlay.begin(over: strip, safety: AppTiming.transitionCoverSafety)
-                    NookLog.log("effect conceal → engine")
-                    await engine.conceal()
-                    snapshot = await engine.snapshot()
-                    if let ghost {
-                        // Same swap-quiet hold as the reveal cover: a late
-                        // second swap after the ghost fades reads as a bounce.
-                        // Exit mirrors the entry style — Smooth tucks toward
-                        // the chevron, Fade dissolves in place.
-                        let slide = settings.revealAnimation == .smooth
-                        Task { @MainActor in
-                            await waitUntilQuiesced(interval: 0.15, deadline: 2, poll: .milliseconds(30))
-                            ghost.fadeOut(slide: slide)
-                        }
-                    }
-                    NookLog.log("effect conceal settled")
-                    dispatch(rehide.handle(.transitionSettled))
-                    settleCatchUp()
-                    scheduleRevealCoverPrecapture()
-                }
+                transitions.performConceal()
             case .armTimer(let deadline):
                 scheduleRehideTimer(at: deadline)
             case .cancelTimer:
