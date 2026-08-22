@@ -45,9 +45,13 @@ extension NSScreen {
         return DisplayUUIDCache.uuid(for: number.uint32Value)
     }
 
+    /// The screen containing a point (bottom-left global coordinates).
+    static func containing(_ location: NSPoint) -> NSScreen? {
+        NSScreen.screens.first { NSMouseInRect(location, $0.frame, false) }
+    }
+
     /// The screen currently under the pointer.
     static var underPointer: NSScreen? {
-        let location = NSEvent.mouseLocation
-        return NSScreen.screens.first { NSMouseInRect(location, $0.frame, false) }
+        containing(NSEvent.mouseLocation)
     }
 }

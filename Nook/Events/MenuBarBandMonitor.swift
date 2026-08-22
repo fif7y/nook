@@ -52,7 +52,7 @@ final class MenuBarBandMonitor {
         case .leftMouseDragged:
             guard event.modifierFlags.contains(.command) else { return }
             let location = NSEvent.mouseLocation
-            let screen = NSScreen.screens.first { NSMouseInRect(location, $0.frame, false) }
+            let screen = NSScreen.containing(location)
             guard let screen, isInMenuBarBand(location, of: screen) else { return }
             if !cmdDragActive {
                 cmdDragActive = true
@@ -66,7 +66,7 @@ final class MenuBarBandMonitor {
             NookLog.log("band: ⌘-drag ended → adopting")
             // Give MenuBarAgent a beat to finalize the new position, then
             // adopt before rehide can run a stale conceal.
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.35) { [weak self] in
+            DispatchQueue.main.asyncAfter(deadline: .now() + AppTiming.dragAdoptDelay) { [weak self] in
                 guard let self, let appState = self.appState else { return }
                 self.dragSinceAdoption = false
                 appState.adoptSectionsFromBar()
@@ -94,7 +94,7 @@ final class MenuBarBandMonitor {
     private func pointerMoved() {
         guard let appState else { return }
         let location = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(location, $0.frame, false) }
+        let screen = NSScreen.containing(location)
         let inBand = screen.map { isInMenuBarBand(location, of: $0) } ?? false
         let displayUUID = screen?.displayUUIDString
 
@@ -129,9 +129,8 @@ final class MenuBarBandMonitor {
             pointerInBand = true
             appState.pointerReturnedToBand()
             if appState.settings.revealTriggers.hoverEnabled, !appState.isRevealed {
-                // Floor: below ~150ms every swipe-through of the band reads as
-                // a hover and the bar flaps open on the way to a hot corner.
-                let delay = max(appState.settings.revealTriggers.hoverDelay, 0.15)
+                // Floor: otherwise the bar flaps open on the way to a hot corner.
+                let delay = max(appState.settings.revealTriggers.hoverDelay, AppTiming.hoverDelayFloor)
                 hoverTimer?.invalidate()
                 hoverTimer = Timer.scheduledTimer(withTimeInterval: delay, repeats: false) { _ in
                     Task { @MainActor [weak self] in
@@ -141,8 +140,8 @@ final class MenuBarBandMonitor {
                         // latency, which is exactly a fast swipe-through. A
                         // graze must not open the bar.
                         let location = NSEvent.mouseLocation
-                        let screen = NSScreen.screens.first { NSMouseInRect(location, $0.frame, false) }
-                        guard let screen, self.isInMenuBarBand(location, of: screen) else { return }
+                        guard let screen = NSScreen.containing(location),
+                              self.isInMenuBarBand(location, of: screen) else { return }
                         appState.reveal([.hidden], reason: .hover)
                     }
                 }
@@ -209,7 +208,7 @@ final class MenuBarBandMonitor {
     private func clicked(_ event: NSEvent) {
         guard let appState else { return }
         let location = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(location, $0.frame, false) }
+        let screen = NSScreen.containing(location)
         let inBand = screen.map { isInMenuBarBand(location, of: $0) } ?? false
 
         if inBand {

@@ -195,6 +195,9 @@ final class ConcealGhostOverlay {
     /// the mirror of the show fade's ease-out. Idempotent. `slide` adds a
     /// rightward drift toward the chevron — the Smooth style's manufactured
     /// tuck-away, mirroring the agent's slide-in on reveal.
+    /// Hide-fade duration shared by the slide drift and the alpha fade.
+    private static let dismissDuration: CFTimeInterval = 0.16
+
     func fadeOut(slide: Bool = false) {
         guard !finished else { return }
         finished = true
@@ -203,12 +206,12 @@ final class ConcealGhostOverlay {
             let anim = CABasicAnimation(keyPath: "position.x")
             anim.fromValue = layer.position.x
             anim.toValue = layer.position.x + shift
-            anim.duration = 0.16
+            anim.duration = Self.dismissDuration
             anim.timingFunction = CAMediaTimingFunction(controlPoints: 0.55, 0, 0.8, 0.4)
             layer.add(anim, forKey: "nookSlideOut")
             layer.position.x += shift
         }
-        AlphaFade.run(imageView, to: 0, duration: 0.16, controlPoints: (0.55, 0, 0.8, 0.4)) { [window, weak self] in
+        AlphaFade.run(imageView, to: 0, duration: Self.dismissDuration, controlPoints: (0.55, 0, 0.8, 0.4)) { [window, weak self] in
             window.orderOut(nil)
             // Only the strip that is still current stands down the flag — an
             // older strip finishing must not expose a newer one's cover.

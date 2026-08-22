@@ -169,13 +169,14 @@ final class PlacementController {
 
     private func physicallyPlaceNow(_ id: ItemID, in section: NookCore.Section) async -> Bool {
         guard let appState else { return false }
-        try? await Task.sleep(for: .milliseconds(450))
+        try? await Task.sleep(for: AppTiming.placementPreSettle)
         // Freshly-shown extras take a beat to be hosted — retry the lookup
         // briefly instead of giving up on the first stale snapshot.
         var snap = await engine.snapshot()
         appState.updateSnapshot(snap)
-        for _ in 0..<3 where !snap.items.contains(where: { $0.id == id && $0.frame != nil }) {
-            try? await Task.sleep(for: .milliseconds(550))
+        for _ in 0..<AppTiming.placementLookupRetries
+            where !snap.items.contains(where: { $0.id == id && $0.frame != nil }) {
+            try? await Task.sleep(for: AppTiming.placementLookupRetryDelay)
             snap = await engine.snapshot()
             appState.updateSnapshot(snap)
         }
@@ -296,7 +297,7 @@ final class PlacementController {
             from: CGPoint(x: frame.midX, y: 12),
             to: CGPoint(x: targetX, y: 12)
         )
-        try? await Task.sleep(for: .milliseconds(300))
+        try? await Task.sleep(for: AppTiming.postDragSettle)
         var after = await engine.snapshot()
         appState.updateSnapshot(after)
         if let newFrame = after.items.first(where: { $0.id == id })?.frame {
@@ -319,7 +320,7 @@ final class PlacementController {
                 from: CGPoint(x: retryFrame.midX, y: 12),
                 to: CGPoint(x: retryX, y: 12)
             )
-            try? await Task.sleep(for: .milliseconds(300))
+            try? await Task.sleep(for: AppTiming.postDragSettle)
             after = await engine.snapshot()
             appState.updateSnapshot(after)
             placed = landedInSlot(after)

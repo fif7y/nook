@@ -126,7 +126,7 @@ final class TransitionCoordinator {
             guard let appState else { return }
             await appState.waitUntilQuiesced(interval: 0.5, deadline: 3, poll: .milliseconds(200))
             // The ghost's fade must not bake into the snapshot.
-            try? await Task.sleep(for: .milliseconds(300))
+            try? await Task.sleep(for: AppTiming.precaptureGhostClearance)
             guard appState.currentRevealedSections.isEmpty, !ConcealGhostOverlay.stripActive
             else { return }
             revealCoverSnapshot = await ConcealGhostOverlay.snapshot(of: revealCoverRect)

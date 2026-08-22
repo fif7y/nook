@@ -575,7 +575,7 @@ final class AppState {
                 if self.settingsWindowVisible
                     || self.pointerDisplayBehavior == .alwaysShowAll
                     || self.bandMonitor?.shouldDeferRehide() == true {
-                    self.scheduleRehideTimer(at: Date().addingTimeInterval(1.5))
+                    self.scheduleRehideTimer(at: Date().addingTimeInterval(AppTiming.rehideDeferRearm))
                 } else {
                     self.rehideTriggered(.delayExpired)
                 }
