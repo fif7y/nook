@@ -40,6 +40,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         // briefly activate other apps — it must never sink under their windows.
         window.level = .floating
         window.collectionBehavior = [.moveToActiveSpace]
+        // Floating again once the user clicks back — pairs with
+        // lowerForSystemPrompt(), which lets system/Sparkle dialogs in front.
+        keyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { window.level = .floating }
+        }
         window.delegate = self
         self.window = window
         window.makeKeyAndOrderFront(nil)
@@ -57,5 +64,14 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         guard let window, window.isVisible else { return }
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
+    }
+
+    private var keyObserver: NSObjectProtocol?
+
+    /// Sparkle's update window (and system dialogs) come up at normal window
+    /// level — a floating settings window buries them. Drop to normal before
+    /// triggering one; the key observer restores floating on the next click.
+    func lowerForSystemPrompt() {
+        window?.level = .normal
     }
 }

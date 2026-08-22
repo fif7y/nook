@@ -38,6 +38,9 @@ final class SparkleController {
         start()
         guard let controller else { return }
         NSApp.activate(ignoringOtherApps: true)
+        // The update window lands at normal level — the floating settings
+        // window would bury it.
+        SettingsWindowController.shared.lowerForSystemPrompt()
         controller.checkForUpdates(nil)
     }
 }
