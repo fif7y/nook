@@ -193,10 +193,15 @@ public actor EngineGoldenGate: MenuBarEngine {
             // revealedSections cleared only a concealing plan swaps (a stale
             // reveal-state plan no-ops against the active reveal assertion) —
             // so a stationary lastSwapAt means the conceal was lost: retry.
+            let pulseBegan = Date()
             for attempt in 1...3 {
-                let before = lastSwapAt
                 await conceal()
-                if lastSwapAt > before { break }
+                // Any swap since the pulse began means the conceal landed —
+                // often via the very converge that superseded ours, since it
+                // reads the already-cleared revealedSections (verified live:
+                // attempt 1 "superseded" at :31.656, the superseding converge
+                // swapped the same conceal 16ms later).
+                if lastSwapAt >= pulseBegan { break }
                 NookLog.log("applyOrder: pulse conceal superseded (attempt \(attempt)) — retrying")
                 try? await Task.sleep(for: EngineTiming.reSlotPulsePoll)
             }
