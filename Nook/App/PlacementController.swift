@@ -320,6 +320,14 @@ final class PlacementController {
                 SettingsWindowController.shared.refocus()
             }
         }
+        // Own-item drag bounced twice: long cross-bar drags are the synthetic
+        // path's weak spot. We own the client — fall back to seeding the
+        // autosave position and re-registering (same mechanism as the
+        // overflow rescue), which needs no drag at all.
+        if !placed, id.bundleID == nookBundle {
+            NookLog.log("place: own-item drag bounced — re-register fallback")
+            return await reRegisterOwnItem(id, in: section, snap: after, screen: screen)
+        }
         return placed
     }
 }
