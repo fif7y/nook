@@ -43,13 +43,21 @@ final class SeparatorManager {
             if let existing = items[spec.id] {
                 configure(existing.button, spec: spec)
             } else {
-                let item = NSStatusBar.system.statusItem(
-                    withLength: spec.style == .space ? 14 : NSStatusItem.variableLength
-                )
-                item.autosaveName = "Nook.Separator.\(spec.id.uuidString)"
-                item.button?.setAccessibilityTitle("Nook.Separator.\(spec.id.uuidString)")
-                configure(item.button, spec: spec)
-                items[spec.id] = item
+                // New status items spawn at the far LEFT of the status area —
+                // on a notched Mac with a full bar that's inside the native
+                // overflow («), unreachable by any drag. Seed a first
+                // position just left of Nook's chevron when none is saved.
+                let key = "NSStatusItem Preferred Position Nook.Separator.\(spec.id.uuidString)"
+                if UserDefaults.standard.object(forKey: key) == nil,
+                   let appState,
+                   let snap = appState.snapshot,
+                   let chevron = appState.nookChevronItem(in: snap)?.frame,
+                   let screen = NSScreen.screens.first {
+                    UserDefaults.standard.set(
+                        screen.frame.maxX - (chevron.minX - 30), forKey: key
+                    )
+                }
+                items[spec.id] = makeItem(for: spec)
             }
             ItemImageCache.registerNookItem(
                 title: "Nook.Separator.\(spec.id.uuidString)",
@@ -57,6 +65,41 @@ final class SeparatorManager {
             )
         }
         applyCurrent()
+    }
+
+    private func makeItem(for spec: SeparatorSpec) -> NSStatusItem {
+        let item = NSStatusBar.system.statusItem(
+            withLength: spec.style == .space ? 14 : NSStatusItem.variableLength
+        )
+        item.autosaveName = "Nook.Separator.\(spec.id.uuidString)"
+        item.button?.setAccessibilityTitle("Nook.Separator.\(spec.id.uuidString)")
+        configure(item.button, spec: spec)
+        return item
+    }
+
+    /// Tear down + re-create one separator after seeding its autosave
+    /// preferred position (distance from the screen's right edge). A FRESH
+    /// registration is the only way to move an item the bar can't show
+    /// (spawned into the native overflow «) — order lives in the client's
+    /// registration, and for our own items WE are the client.
+    func reRegister(itemID: ItemID, preferredPosition: CGFloat) -> Bool {
+        guard let entry = specsByID.first(where: { Self.itemID(for: $0.value) == itemID })
+        else { return false }
+        let spec = entry.value
+        if let item = items[spec.id] {
+            NSStatusBar.system.removeStatusItem(item)
+            items.removeValue(forKey: spec.id)
+            lastVisible.removeValue(forKey: spec.id)
+        }
+        // Seed AFTER removal — AppKit persists the outgoing position on the
+        // way out and would clobber an earlier write.
+        UserDefaults.standard.set(
+            preferredPosition,
+            forKey: "NSStatusItem Preferred Position Nook.Separator.\(spec.id.uuidString)"
+        )
+        items[spec.id] = makeItem(for: spec)
+        applyCurrent()
+        return true
     }
 
     /// Section visibility, extras-style: width-collapse in the same reflow as

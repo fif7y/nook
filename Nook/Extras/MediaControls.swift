@@ -104,6 +104,28 @@ final class ExtrasManager {
         applyCurrent()
     }
 
+    /// Tear down + re-create one extra after seeding its autosave preferred
+    /// position — the overflow rescue (see SeparatorManager.reRegister).
+    func reRegister(itemID: ItemID, preferredPosition: CGFloat) -> Bool {
+        guard let entry = specs.first(where: { Self.itemID(for: $0.value) == itemID })
+        else { return false }
+        let spec = entry.value
+        if let item = items[spec.id] {
+            NSStatusBar.system.removeStatusItem(item)
+            items.removeValue(forKey: spec.id)
+            lastVisible.removeValue(forKey: spec.id)
+        }
+        // Seed AFTER removal — AppKit persists the outgoing position on the
+        // way out and would clobber an earlier write.
+        UserDefaults.standard.set(
+            preferredPosition,
+            forKey: "NSStatusItem Preferred Position \(spec.itemTitle)"
+        )
+        items[spec.id] = makeItem(for: spec)
+        applyCurrent()
+        return true
+    }
+
     /// Applies section visibility. Hiding collapses the item's LENGTH instead
     /// of toggling isVisible — isVisible plays its own slide animation on a
     /// different clock than the assertion reflow; a width collapse rides the
