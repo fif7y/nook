@@ -85,56 +85,6 @@ final class PlacementController {
         }
     }
 
-    /// Overflow rescue for Nook-owned items: compute the slot from the
-    /// desired neighbors' RAW frames, seed the AppKit autosave position
-    /// (distance from the screen's right edge), and re-register the item.
-    private func reRegisterOwnItem(
-        _ id: ItemID, in section: NookCore.Section,
-        snap: EngineSnapshot, screen: NSScreen
-    ) async -> Bool {
-        guard let appState else { return false }
-        let globalOrder = appState.editorItems(in: .alwaysHidden)
-            + appState.editorItems(in: .hidden)
-            + appState.editorItems(in: .visible)
-        let index = globalOrder.firstIndex(where: { $0.id.sectionKey == id.sectionKey })
-            ?? globalOrder.count
-        func usable(_ f: CGRect) -> Bool {
-            MenuBarGeometry.isInBand(f) && f.midX > 0 && f.midX < screen.frame.maxX
-        }
-        let left = globalOrder[..<index].reversed()
-            .first(where: { $0.frame.map(usable) == true })?.frame
-        let right = globalOrder[(min(index + 1, globalOrder.count))...]
-            .first(where: { $0.frame.map(usable) == true })?.frame
-        let chevron = appState.nookChevronItem(in: snap)?.frame.flatMap { usable($0) ? $0 : nil }
-        let managedMinX = snap.items
-            .filter { !MenuBarPolicy.isUnmanagedAppleBundle($0.id.bundleID) && !$0.id.isSystemModule }
-            .compactMap(\.frame?.minX)
-            .min()
-        let systemMinX = snap.items
-            .filter { MenuBarPolicy.isUnmanagedAppleBundle($0.id.bundleID) || $0.id.isSystemModule }
-            .compactMap(\.frame)
-            .filter(usable)
-            .map(\.minX)
-            .min()
-        guard let targetX = PlacementGeometry.targetX(
-            leftNeighbor: left, rightNeighbor: right, chevron: chevron,
-            section: section, managedMinX: managedMinX, systemMinX: systemMinX,
-            screenMaxX: screen.frame.maxX
-        ) else {
-            NookLog.log("place: overflow rescue \(id.rawValue) — no anchor, skipping")
-            return false
-        }
-        let preferred = screen.frame.maxX - targetX
-        NookLog.log("place: overflow rescue \(id.rawValue) → re-register at x=\(Int(targetX)) (preferred \(Int(preferred)))")
-        guard appState.reRegisterOwnItem(id, preferredPosition: preferred) else { return false }
-        try? await Task.sleep(for: .seconds(1.2))
-        let after = await engine.snapshot()
-        appState.updateSnapshot(after)
-        let landed = after.items.first(where: { $0.id.sectionKey == id.sectionKey })?.frame
-        NookLog.log("place: overflow rescue landed=\(landed.map { "x=\(Int($0.midX))" } ?? "nil")")
-        return landed.map(MenuBarGeometry.isInBand) == true
-    }
-
     private func physicallyPlaceNow(_ id: ItemID, in section: NookCore.Section) async -> Bool {
         guard let appState else { return false }
         activePlacements += 1
@@ -157,19 +107,8 @@ final class PlacementController {
             appState.updateSnapshot(snap)
         }
         let nookBundle = Bundle.main.bundleIdentifier ?? NookBundle.fallbackID
-        let resolved = liveItem(in: snap)
-        if id.bundleID == nookBundle,
-           resolved?.frame.map(MenuBarGeometry.isInBand) != true,
-           let screen = NSScreen.screens.first {
-            // Nook-owned item the bar can't show (spawned into the native
-            // overflow «, or carrying an out-of-band frame): there is nothing
-            // to drag. We ARE the client for our own items — seed the AppKit
-            // autosave position and re-register; the fresh registration
-            // reports the seeded slot (order lives in client registrations).
-            return await reRegisterOwnItem(id, in: section, snap: snap, screen: screen)
-        }
         guard
-            let item = resolved,
+            let item = liveItem(in: snap),
             let frame = item.frame
         else {
             NookLog.log("place: no frame for \(id.rawValue) — skipping physical move (concealed?)")
@@ -333,14 +272,6 @@ final class PlacementController {
                 try? await Task.sleep(for: .milliseconds(500))
                 SettingsWindowController.shared.refocus()
             }
-        }
-        // Own-item drag bounced twice: long cross-bar drags are the synthetic
-        // path's weak spot. We own the client — fall back to seeding the
-        // autosave position and re-registering (same mechanism as the
-        // overflow rescue), which needs no drag at all.
-        if !placed, id.bundleID == nookBundle {
-            NookLog.log("place: own-item drag bounced — re-register fallback")
-            return await reRegisterOwnItem(id, in: section, snap: after, screen: screen)
         }
         return placed
     }

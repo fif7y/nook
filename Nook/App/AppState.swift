@@ -637,15 +637,6 @@ final class AppState {
     /// drags — see PlacementController.syntheticDragInFlight.
     var syntheticDragInFlight: Bool { placement.syntheticDragInFlight }
 
-    /// Re-register a Nook-owned item (separator/extra) with a seeded AppKit
-    /// autosave position — the overflow rescue for items the bar can't show.
-    func reRegisterOwnItem(_ id: ItemID, preferredPosition: CGFloat) -> Bool {
-        if id.rawValue.contains("Nook.Separator.") {
-            return separators?.reRegister(itemID: id, preferredPosition: preferredPosition) ?? false
-        }
-        return extras?.reRegister(itemID: id, preferredPosition: preferredPosition) ?? false
-    }
-
     /// The one write path for the engine snapshot mirror (PlacementController
     /// and engine-event handling route through here). Content-gated: every
     /// assignment fires @Observable invalidation (re-running the editor
