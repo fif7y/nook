@@ -54,7 +54,11 @@ uses public APIs: Accessibility and ScreenCaptureKit.
 ## Install
 
 Download the latest DMG from [Releases](https://github.com/fif7y/nook/releases),
-drag Nook to Applications, and launch it.
+drag Nook to Applications, and launch it. Or with Homebrew:
+
+```sh
+brew install fif7y/tap/nook
+```
 
 Requires **macOS 27 (Golden Gate)**. Earlier versions of macOS use a
 different menu bar architecture that Nook does not target.
