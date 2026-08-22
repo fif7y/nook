@@ -131,6 +131,12 @@ public enum RevealAnimation: String, Codable, CaseIterable, Sendable {
     case fade
 }
 
+/// Defaults shared beyond the store itself (the engine boots with the same
+/// steady-extras state a fresh store carries).
+public enum SettingsDefaults {
+    public static let hideSystemExtras = true
+}
+
 public struct SettingsStore: Codable, Equatable, Sendable {
     public var onboardingCompleted: Bool = false
     public var launchAtLogin: Bool = false
@@ -147,7 +153,7 @@ public struct SettingsStore: Codable, Equatable, Sendable {
     /// Hold the hide-assertion even while revealed (allowlist just widens).
     /// Keeps macOS's collateral extras (Now Playing, camera pill, AirDrop…)
     /// consistently hidden instead of jumping in and out on every transition.
-    public var hideSystemExtras: Bool = true
+    public var hideSystemExtras: Bool = SettingsDefaults.hideSystemExtras
 
     /// Nook's own media-controls item (play/pause/next/prev via media keys).
     /// Superseded by `extraItems`; kept for migration of early builds.

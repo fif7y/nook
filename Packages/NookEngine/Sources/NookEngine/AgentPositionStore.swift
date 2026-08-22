@@ -14,12 +14,14 @@ enum AgentPositionStore {
     /// Wide, collision-proof spacing between managed items.
     static let gap: Double = 100
 
-    /// Rewrites positions so that `orderedTags` appear in the given left-to-
-    /// right order. Unmanaged tags keep their existing values. Returns the
-    /// written dictionary (for the watcher's self-write suppression).
-    @discardableResult
-    static func writeOrder(_ orderedTags: [String]) -> [String: Double] {
-        var positions = AgentPositions.read()
+    /// Pure half of writeOrder: the merged positions dict for `orderedTags`
+    /// over the existing plist state. NOTE: the return value is the ENTIRE
+    /// merged dict (every tag ever persisted), not just this pass's slots —
+    /// re-mint detection upstream leans on that (see applyOrder).
+    static func positions(
+        applying orderedTags: [String], to existing: [String: Double]
+    ) -> [String: Double] {
+        var positions = existing
         // Clock sits at 0 and grows rightward in "position" space; larger
         // values sit further left. Preserve that: assign decreasing positions
         // from a base left of the rightmost managed slot.
@@ -40,6 +42,15 @@ enum AgentPositionStore {
             }
             value -= gap
         }
+        return positions
+    }
+
+    /// Rewrites positions so that `orderedTags` appear in the given left-to-
+    /// right order. Unmanaged tags keep their existing values. Returns the
+    /// written dictionary (for the watcher's self-write suppression).
+    @discardableResult
+    static func writeOrder(_ orderedTags: [String]) -> [String: Double] {
+        let positions = positions(applying: orderedTags, to: AgentPositions.read())
         CFPreferencesSetValue(
             key as CFString,
             positions as CFDictionary,

@@ -148,22 +148,36 @@ public struct SectionModel: Codable, Equatable, Sendable {
         }
     }
 
-    /// Bundle-granularity conflict check against the currently observed items:
-    /// a bundle can only be concealed if none of its items must remain visible.
-    /// (`observedItems` matters because items absent from `assignments` are
-    /// visible by default and still pin their bundle on screen.)
-    public func concealableBundleIDs(
+    /// Bundles pinned on screen for the given reveal state: any observed item
+    /// in `.visible` or a revealed section pins its whole bundle (hiding is
+    /// per-bundle). Items absent from `assignments` are visible by default.
+    public func mustShowBundles(
         observedItems: [ItemID],
         revealing revealed: Set<Section>
     ) -> Set<String> {
         var mustShow = Set<String>()
-        var wantHide = Set<String>()
         for item in observedItems {
             guard let bundle = item.bundleID else { continue }
             let section = self.section(of: item)
             if section == .visible || revealed.contains(section) {
                 mustShow.insert(bundle)
-            } else {
+            }
+        }
+        return mustShow
+    }
+
+    /// Bundle-granularity conflict check against the currently observed items:
+    /// a bundle can only be concealed if none of its items must remain visible.
+    public func concealableBundleIDs(
+        observedItems: [ItemID],
+        revealing revealed: Set<Section>
+    ) -> Set<String> {
+        let mustShow = mustShowBundles(observedItems: observedItems, revealing: revealed)
+        var wantHide = Set<String>()
+        for item in observedItems {
+            guard let bundle = item.bundleID else { continue }
+            let section = self.section(of: item)
+            if section != .visible, !revealed.contains(section) {
                 wantHide.insert(bundle)
             }
         }

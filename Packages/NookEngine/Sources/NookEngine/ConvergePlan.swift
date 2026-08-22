@@ -54,14 +54,10 @@ struct ConvergePlan: Equatable {
         // observation-only plan computed concealable=[] whenever carried
         // dropped, swapped in an allow-all assertion, and flashed every
         // hidden section until the correcting converge landed.
-        var mustShow = Set<String>()
-        for id in observedIDs {
-            guard let bundle = id.bundleID else { continue }
-            let section = model.section(of: id)
-            if section == .visible || revealedSections.contains(section) {
-                mustShow.insert(bundle)
-            }
-        }
+        let mustShow = model.mustShowBundles(
+            observedItems: observedIDs,
+            revealing: revealedSections
+        )
         for (id, section) in model.assignments {
             guard section != .visible, !revealedSections.contains(section),
                   let bundle = id.bundleID,

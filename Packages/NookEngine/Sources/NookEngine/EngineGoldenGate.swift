@@ -44,7 +44,7 @@ public actor EngineGoldenGate: MenuBarEngine {
     /// concealable (allowlist = every observed bundle). Keeps macOS's
     /// collateral-hidden extras (Now Playing, camera pill, AirDrop, Focus)
     /// consistently gone, so the bar never reflows around them.
-    private var steadyExtras = true
+    private var steadyExtras = SettingsDefaults.hideSystemExtras
     private var assertion: AssessmentAssertion?
     /// The allowlist/concealable pair the active assertion was built with.
     /// Converging to an equivalent state is a NO-OP — without this,
@@ -234,22 +234,8 @@ public actor EngineGoldenGate: MenuBarEngine {
         let epoch = convergeEpoch
         let snapshot = await refreshSnapshot()
         guard epoch == convergeEpoch else { return }
-        // An empty AX walk can't be trusted: a real bar always has system
-        // items, so this is the agent tree not being readable yet (launch,
-        // locked screen). A plan computed from it has concealable=[] and
-        // would swap in an allow-all assertion — a momentary un-hide flash
-        // followed by a second animated swap when AX populates. Defer with a
-        // bounded retry; past the bound, the itemsChanged fired by the first
-        // successful re-walk re-converges us.
         if snapshot.items.isEmpty {
-            NookLog.log("converge: AX walk empty — deferring (retries left \(emptyAXRetriesRemaining))")
-            if emptyAXRetriesRemaining > 0 {
-                emptyAXRetriesRemaining -= 1
-                Task {
-                    try? await Task.sleep(for: EngineTiming.emptyAXRetryDelay)
-                    await self.converge()
-                }
-            }
+            deferEmptyWalkRetry()
             return
         }
         emptyAXRetriesRemaining = EngineTiming.emptyAXRetries
@@ -275,9 +261,6 @@ public actor EngineGoldenGate: MenuBarEngine {
         for (id, reason) in plan.stale {
             NookLog.log("converge: pruned concealed \(reason == .staleAlias ? "stale alias" : "entry for quit app") \(id.rawValue)")
         }
-        let concealable = plan.concealable
-        let allowedSystem = plan.allowedSystem
-        let allowedBundles = plan.allowedBundles
 
         guard AssessmentMode.isAvailable else {
             if assertion != nil { invalidateAssertion() }
@@ -286,22 +269,54 @@ public actor EngineGoldenGate: MenuBarEngine {
         }
 
         if plan.dropAssertion {
-            // Nothing to hide and extras are allowed back: drop the assertion.
-            invalidateAssertion()
-            notifyReflowCompanion()
-            let after = await refreshSnapshot()
-            guard epoch == convergeEpoch else { return }
-            // Nothing is concealed now — clearing the carried set here stops
-            // observers from reporting phantom concealment until the next swap.
-            lastSnapshot = EngineSnapshot(
-                items: after.items,
-                concealed: [],
-                takenAt: after.takenAt
-            )
+            await dropAssertionPath(epoch: epoch)
             return
         }
         // With steadyExtras on, an empty concealable set still holds an
         // assertion allowing every observed bundle — only the OS extras hide.
+        await performSwap(plan: plan, snapshot: snapshot, epoch: epoch)
+    }
+
+    /// An empty AX walk can't be trusted: a real bar always has system
+    /// items, so this is the agent tree not being readable yet (launch,
+    /// locked screen). A plan computed from it has concealable=[] and
+    /// would swap in an allow-all assertion — a momentary un-hide flash
+    /// followed by a second animated swap when AX populates. Defer with a
+    /// bounded retry; past the bound, the itemsChanged fired by the first
+    /// successful re-walk re-converges us.
+    private func deferEmptyWalkRetry() {
+        NookLog.log("converge: AX walk empty — deferring (retries left \(emptyAXRetriesRemaining))")
+        if emptyAXRetriesRemaining > 0 {
+            emptyAXRetriesRemaining -= 1
+            Task {
+                try? await Task.sleep(for: EngineTiming.emptyAXRetryDelay)
+                await self.converge()
+            }
+        }
+    }
+
+    /// Nothing to hide and extras are allowed back: drop the assertion.
+    private func dropAssertionPath(epoch: Int) async {
+        invalidateAssertion()
+        notifyReflowCompanion()
+        let after = await refreshSnapshot()
+        guard epoch == convergeEpoch else { return }
+        // Nothing is concealed now — clearing the carried set here stops
+        // observers from reporting phantom concealment until the next swap.
+        lastSnapshot = EngineSnapshot(
+            items: after.items,
+            concealed: [],
+            takenAt: after.takenAt
+        )
+    }
+
+    /// The swap half of converge: teardown detection, the idempotence no-op
+    /// guard, assertion activation (activate new THEN invalidate previous),
+    /// snapshot stamping, and the off-critical-path verify kickoff.
+    private func performSwap(plan: ConvergePlan, snapshot: EngineSnapshot, epoch: Int) async {
+        let concealable = plan.concealable
+        let allowedSystem = plan.allowedSystem
+        let allowedBundles = plan.allowedBundles
 
         // Teardown detection: a concealable bundle observed LIVE while our
         // bookkeeping claims a matching assertion means macOS dropped the
