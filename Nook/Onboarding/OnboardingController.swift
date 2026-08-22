@@ -33,9 +33,25 @@ final class OnboardingController {
         // LSUIElement app has no dock icon to recover it from.
         window.level = .floating
         window.collectionBehavior = [.moveToActiveSpace]
+        // Floating again once the user clicks back — pairs with
+        // lowerForSystemPrompt(), which must let system dialogs in front.
+        keyObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: window, queue: .main
+        ) { _ in
+            MainActor.assumeIsolated { window.level = .floating }
+        }
         self.window = window
         window.makeKeyAndOrderFront(nil)
         NSApp.activate()
+    }
+
+    private var keyObserver: NSObjectProtocol?
+
+    /// The system permission dialog (tccd) comes up at normal window level —
+    /// a floating onboarding buries it. Drop to normal before triggering any
+    /// system prompt; the key observer restores floating on the next click.
+    func lowerForSystemPrompt() {
+        window?.level = .normal
     }
 
     func dismiss() {

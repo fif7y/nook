@@ -217,6 +217,9 @@ private struct AccessStep: View {
 
     private func requestAccessibility() {
         NSApp.activate()
+        // The system dialog / System Settings must land IN FRONT of the
+        // floating onboarding window.
+        OnboardingController.shared.lowerForSystemPrompt()
         let alreadyPrompted = UserDefaults.standard.bool(forKey: "nook.axPromptShown")
         if !alreadyPrompted {
             UserDefaults.standard.set(true, forKey: "nook.axPromptShown")
