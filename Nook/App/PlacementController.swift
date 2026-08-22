@@ -175,7 +175,10 @@ final class PlacementController {
         }
     }
 
-    private func physicallyPlaceNow(_ id: ItemID, in section: NookCore.Section) async -> Bool {
+    /// `allowExpansion` bounds the retry-after-«-expansion to depth one.
+    private func physicallyPlaceNow(
+        _ id: ItemID, in section: NookCore.Section, allowExpansion: Bool = true
+    ) async -> Bool {
         guard let appState else { return false }
         activePlacements += 1
         defer { activePlacements -= 1 }
@@ -219,6 +222,14 @@ final class PlacementController {
         }
         if phantom {
             NookLog.log("place: \(id.rawValue) frame is a phantom (duplicate minX \(frame.minX)) — trapped in overflow")
+            // Expand the native « inline: the trapped item materializes with
+            // a real frame and the normal drag proceeds. Only resolvable
+            // while Nook is frontmost (editor flows) — background placements
+            // fall through to the conceal-settle rescue.
+            if allowExpansion, await OverflowChevron.expandForPlacement() {
+                try? await Task.sleep(for: AppTiming.overflowExpandSettle)
+                return await physicallyPlaceNow(id, in: section, allowExpansion: false)
+            }
             queueRescue(id)
             return false
         }
@@ -379,6 +390,12 @@ final class PlacementController {
            let finalX = after.items.first(where: { $0.id == liveID })?.frame?.minX,
            abs(finalX - frame.minX) < 0.5 {
             NookLog.log("place: \(id.rawValue) never moved (x=\(finalX)) — trapped or bounced")
+            // Same inline «-expansion as the phantom path — a SINGLE trapped
+            // item often has no duplicate to trip the pre-check on.
+            if allowExpansion, await OverflowChevron.expandForPlacement() {
+                try? await Task.sleep(for: AppTiming.overflowExpandSettle)
+                return await physicallyPlaceNow(id, in: section, allowExpansion: false)
+            }
             queueRescue(id)
         }
         // The drag clicked outside Nook — hand focus back to the settings

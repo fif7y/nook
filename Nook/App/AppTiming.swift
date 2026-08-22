@@ -35,4 +35,6 @@ enum AppTiming {
     /// Rescue force-show → measure: the attach + fade + agent reflow must
     /// finish or the frame still reads as a phantom (burned attempt 1 live).
     static let rescueForceShowSettle: Duration = .milliseconds(600)
+    /// « expansion → re-measure: the overflow items reflow into the bar.
+    static let overflowExpandSettle: Duration = .milliseconds(700)
 }

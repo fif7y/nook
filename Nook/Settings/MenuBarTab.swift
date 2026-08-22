@@ -88,6 +88,8 @@ struct MenuBarTab: View {
             appState.reveal([.hidden, .alwaysHidden], reason: .settingsPreview)
         }
         .onDisappear {
+            // Collapse the « if a placement expanded it during this session.
+            OverflowChevron.restoreAfterEditing()
             appState.applyPointerDisplayPolicyAfterDismissal()
         }
     }
