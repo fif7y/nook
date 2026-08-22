@@ -78,6 +78,11 @@ final class PlacementController {
                 let placed = await physicallyPlace(
                     id, in: appState.settings.sectionModel.section(of: id)
                 )
+                if placed {
+                    // A verified reveal-time placement ends any rescue
+                    // ping-pong — the item is truly in its slot.
+                    rescueAttempts.removeValue(forKey: id)
+                }
                 // Still unmeasurable (section concealed again, no frame) —
                 // requeue for the next reveal settle. Trapped items moved to
                 // the rescue queue instead; conceal is what frees them.
@@ -138,7 +143,15 @@ final class PlacementController {
                 // this loop is the single requeue authority.
                 pendingRescues.remove(id)
                 if placed {
-                    rescueAttempts.removeValue(forKey: id)
+                    // Zone placement only: the section's neighbors are
+                    // concealed here, so the target was the chevron fallback
+                    // and the in-slot check is vacuous. Queue the EXACT slot
+                    // for the next reveal settle, when neighbors have real
+                    // frames. Attempts reset there, not here — a reveal that
+                    // re-traps the item ping-pongs back to rescue, and the
+                    // cap must span the whole cycle.
+                    pendingPlacements.insert(id)
+                    NookLog.log("rescue: \(id.rawValue) zone-placed — exact slot at next reveal settle")
                 } else {
                     let attempts = rescueAttempts[id, default: 0] + 1
                     rescueAttempts[id] = attempts
@@ -279,8 +292,12 @@ final class PlacementController {
         }
 
         // Skip only when the item is genuinely at its slot already — a full
-        // icon-width tolerance silently swallowed every one-slot move.
-        let alreadyPlaced = abs(frame.midX - targetX) < 10
+        // icon-width tolerance silently swallowed every one-slot move. With
+        // NO live neighbors the target is a zone-approximate chevron
+        // fallback, and chasing it exactly just bounces (rescue drags at
+        // conceal hopped 30pt into the chevron and reverted every time).
+        let fallbackTarget = leftNeighbor == nil && rightNeighbor == nil
+        let alreadyPlaced = abs(frame.midX - targetX) < (fallbackTarget ? 40 : 10)
         guard !alreadyPlaced else {
             NookLog.log("place: \(id.rawValue) already at slot (x=\(frame.midX), target=\(targetX))")
             return true
