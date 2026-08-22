@@ -408,8 +408,8 @@ private struct DisplayRow: View {
                         }
                     }
                 )) {
-                    Text("Collapse into Nook").tag(DisplayBehavior.collapse)
-                    Text("Always show everything").tag(DisplayBehavior.alwaysShowAll)
+                    Text("Collapse").tag(DisplayBehavior.collapse)
+                    Text("Expanded").tag(DisplayBehavior.alwaysShowAll)
                 }
                 .pickerStyle(.menu)
                 .labelsHidden()
