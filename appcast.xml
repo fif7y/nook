@@ -3,6 +3,17 @@
     <channel>
         <title>Nook</title>
         <item>
+            <title>0.1.1</title>
+            <pubDate>Sat, 22 Aug 2026 10:53:47 -0400</pubDate>
+            <sparkle:version>2</sparkle:version>
+            <sparkle:shortVersionString>0.1.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>27.0</sparkle:minimumSystemVersion>
+            <enclosure url="https://github.com/fif7y/nook/releases/download/v0.1.1/Nook-0.1.1.dmg" length="1921556" type="application/octet-stream" sparkle:edSignature="y/o1hYvxoRy4geu9CVdkduDrSvGrw5HZBa3j6U3EjFPA9/2q4Gtmowg6i3tARzNswI9Kw1USPv7KlSPWGSM2DQ=="/>
+            <sparkle:deltas>
+                <enclosure url="https://github.com/fif7y/nook/releases/download/v0.1.1/Nook2-1.delta" sparkle:deltaFrom="1" length="186510" type="application/octet-stream" sparkle:deltaFromSparkleExecutableSize="977840" sparkle:deltaFromSparkleLocales="de,he,ar,el,ja,fa,uk" sparkle:edSignature="H8IRMIgOdTmv7k+bzTOqcwqPy4wIoIqjFXH1VYISBEJzMkXCdAuLWug/48jeNPXU+hZA8iVSiNC8ciuVYAR8Bg=="/>
+            </sparkle:deltas>
+        </item>
+        <item>
             <title>0.1.0</title>
             <pubDate>Thu, 20 Aug 2026 23:23:46 -0400</pubDate>
             <sparkle:version>1</sparkle:version>
